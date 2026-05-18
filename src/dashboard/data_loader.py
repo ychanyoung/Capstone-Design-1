@@ -775,6 +775,24 @@ class DashboardDataLoader:
             return self._adapt_ab_results(payload)
         return {}
 
+    def load_uniform_treatment_clv(self) -> dict:
+        """Load uniform-treatment CLV summary.
+
+        Returns:
+            Dict with baseline_clv, uniform_treatment_clv, delta_clv,
+            n_customers, avg_uplift_score, method, generated_at.
+            Empty dict if the artifact is missing.
+        """
+        path = self.results_dir / "uniform_treatment_clv.json"
+        if not path.exists():
+            return {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning("load_uniform_treatment_clv failed: %s", e)
+            return {}
+
     def load_budget_results(self) -> pd.DataFrame:
         """Load budget optimization results by segment.
 

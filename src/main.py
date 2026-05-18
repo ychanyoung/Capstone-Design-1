@@ -88,6 +88,7 @@ REQUIRED_PIPELINE_ARTIFACTS = [
     "qini_curve.png",
     "clv_predictions.csv",
     "clv_validation.json",
+    "uniform_treatment_clv.json",
     "segments_6plus.csv",
     "segment_summary.csv",
     "segment_validation.json",
@@ -2216,6 +2217,126 @@ def run_clv(config: Dict[str, Any], args: argparse.Namespace) -> Dict[str, Any]:
             "validation": validation}
 
 
+def run_uniform_treatment_clv(
+    config: Dict[str, Any], args: argparse.Namespace
+) -> Dict[str, Any]:
+    """Compute the uniform-treatment CLV ("전체 고객에게 평균적으로 쿠폰을 적용했을 때의 총 CLV").
+
+    Joins uplift + CLV per-customer artifacts and sums the
+    post-treatment expected value ``clv * (1 - max(0, baseline_churn_probability - uplift_score))``
+    across all customers. Also reports the no-coupon baseline for delta.
+
+    Writes ``results/uniform_treatment_clv.json``.
+    """
+    from datetime import datetime, timezone
+
+    _, results_dir, _ = _resolve_dirs(args)
+
+    uplift_path = results_dir / "uplift_results.csv"
+    clv_path = results_dir / "clv_predictions.csv"
+    if not uplift_path.exists():
+        raise FileNotFoundError(
+            f"Missing uplift artifact: {uplift_path}. Run --mode uplift first."
+        )
+    if not clv_path.exists():
+        raise FileNotFoundError(
+            f"Missing CLV artifact: {clv_path}. Run --mode clv first."
+        )
+
+    uplift_df = pd.read_csv(uplift_path)
+    clv_df = pd.read_csv(clv_path)
+
+    # Prefer clv_predicted (dashboard convention); fall back to predicted_clv.
+    if "clv_predicted" in clv_df.columns:
+        clv_col = "clv_predicted"
+    elif "predicted_clv" in clv_df.columns:
+        clv_col = "predicted_clv"
+    else:
+        raise KeyError(
+            "clv_predictions.csv must contain 'clv_predicted' or 'predicted_clv'."
+        )
+
+    needed_uplift_cols = {"customer_id", "uplift_score", "baseline_churn_probability"}
+    missing = needed_uplift_cols - set(uplift_df.columns)
+    if missing:
+        raise KeyError(f"uplift_results.csv missing columns: {sorted(missing)}")
+
+    merged = uplift_df[list(needed_uplift_cols)].merge(
+        clv_df[["customer_id", clv_col]], on="customer_id", how="inner"
+    )
+
+    # Fallback for any rows where baseline_churn_probability is missing —
+    # try budget_optimization.csv churn_prob.
+    if merged["baseline_churn_probability"].isna().any():
+        budget_path = results_dir / "budget_optimization.csv"
+        if budget_path.exists():
+            try:
+                budget_df = pd.read_csv(
+                    budget_path, usecols=["customer_id", "churn_prob"]
+                )
+                churn_map = budget_df.set_index("customer_id")["churn_prob"]
+                fallback = merged["customer_id"].map(churn_map)
+                merged["baseline_churn_probability"] = merged[
+                    "baseline_churn_probability"
+                ].fillna(fallback)
+            except Exception as fb_err:  # pragma: no cover - defensive
+                logger.warning(
+                    "uniform_clv churn fallback failed: %s", fb_err
+                )
+        merged["baseline_churn_probability"] = merged[
+            "baseline_churn_probability"
+        ].fillna(0.0)
+
+    clv_vals = merged[clv_col].astype(float).values
+    uplift_vals = merged["uplift_score"].astype(float).values
+    baseline_churn = merged["baseline_churn_probability"].astype(float).values
+
+    p_treatment = np.clip(baseline_churn - uplift_vals, 0.0, 1.0)
+    p_baseline = np.clip(baseline_churn, 0.0, 1.0)
+
+    treated_clv_per_customer = clv_vals * (1.0 - p_treatment)
+    baseline_clv_per_customer = clv_vals * (1.0 - p_baseline)
+
+    uniform_treatment_clv = float(np.sum(treated_clv_per_customer))
+    baseline_clv = float(np.sum(baseline_clv_per_customer))
+    delta_clv = uniform_treatment_clv - baseline_clv
+    n_customers = int(len(merged))
+    avg_uplift_score = float(np.mean(uplift_vals)) if n_customers else 0.0
+
+    payload: Dict[str, Any] = {
+        "baseline_clv": baseline_clv,
+        "uniform_treatment_clv": uniform_treatment_clv,
+        "delta_clv": delta_clv,
+        "n_customers": n_customers,
+        "avg_uplift_score": avg_uplift_score,
+        "method": "clv * (1 - max(0, baseline_churn_probability - uplift_score))",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    out_path = results_dir / "uniform_treatment_clv.json"
+    with open(out_path, "w", encoding="utf-8") as fp:
+        json.dump(payload, fp, indent=2, default=str)
+
+    logger.info(
+        "Uniform-treatment CLV: baseline=%.0f, treated=%.0f, delta=%.0f, n=%d, avg_uplift=%.4f",
+        baseline_clv,
+        uniform_treatment_clv,
+        delta_clv,
+        n_customers,
+        avg_uplift_score,
+    )
+
+    return {
+        "mode": "uniform_clv",
+        "status": "completed",
+        "baseline_clv": baseline_clv,
+        "uniform_treatment_clv": uniform_treatment_clv,
+        "delta_clv": delta_clv,
+        "n_customers": n_customers,
+        "avg_uplift_score": avg_uplift_score,
+    }
+
+
 def run_optimize(config: Dict[str, Any], args: argparse.Namespace) -> Dict[str, Any]:
     """Run LP-based budget optimisation for retention campaigns."""
     from src.models.budget_optimizer import BudgetOptimizer
@@ -3528,6 +3649,16 @@ def run_all(config: Dict[str, Any], args: argparse.Namespace) -> Dict[str, Any]:
         raise RuntimeError(
             f"Full pipeline did not complete cleanly: {results.get('status')}"
         )
+
+    # Post-pipeline derived artifact: uniform-treatment CLV. Needs both
+    # uplift_results.csv and clv_predictions.csv which the runner has just
+    # produced. Non-fatal — log and continue if it fails so checklist below
+    # can report a precise reason.
+    try:
+        run_uniform_treatment_clv(config, args)
+    except Exception as uclv_err:  # pragma: no cover - defensive
+        logger.warning("uniform-treatment CLV step failed: %s", uclv_err)
+
     checklist = _write_artifact_checklist(
         config,
         results_dir,
@@ -3558,6 +3689,7 @@ MODES = {
     "train": run_train,
     "uplift": run_uplift,
     "clv": run_clv,
+    "uniform_clv": run_uniform_treatment_clv,
     "optimize": run_optimize,
     "ab_test": run_ab_test,
     "survival": run_survival,
@@ -3601,6 +3733,7 @@ Available modes:
   train      Train churn prediction models (ML/DL/Ensemble)
   uplift     Train uplift model and segment customers
   clv        Predict Customer Lifetime Value
+  uniform_clv Compute uniform-treatment CLV (everyone gets a coupon)
   optimize   LP-based budget optimization (use --budget N)
   ab_test    A/B test statistical analysis
   survival   Survival analysis (Cox PH)
