@@ -1138,6 +1138,7 @@ def _render_mlflow_tracking(
                     y="auc",
                     color="model_type" if "model_type" in mlflow_runs.columns else None,
                     size="training_time_s" if "training_time_s" in mlflow_runs.columns else None,
+                    render_mode="svg",
                     title=_tr("Model Performance Over Time"),
                 )
                 st.plotly_chart(fig_timeline, use_container_width=True)

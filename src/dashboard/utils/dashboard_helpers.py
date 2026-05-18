@@ -381,7 +381,7 @@ I18N_KO = {
     "High/Critical": "고/위급",
     "High/Critical Risk": "고/위급 위험",
     "Highest Risk Segment": "최고 위험 세그먼트",
-    "Histogram bin width: 0.02 (50 bins across [0, 1]) — consistent with the Churn Analytics page so the leftmost-bin counts can be reconciled across pages.": "히스토그램 빈 너비: 0.02 (50 bins, [0, 1] 범위) — 이탈 분석 페이지와 일관되어 leftmost-bin 카운트가 페이지 간 일치합니다.",
+    "Histogram bin width: 0.02 (50 bins across [0, 1]) — consistent with the Churn Analytics page so the leftmost-bin counts can be reconciled across pages.": "히스토그램 빈 너비: 0.02 (50개 구간, [0, 1] 범위) — 이탈 분석 페이지와 같은 기준이라 첫 구간 카운트를 페이지 간 비교할 수 있습니다.",
     "Historical": "과거 데이터",
     "Hyperparameter Analysis": "하이퍼파라미터 분석",
     "Importance": "중요도",

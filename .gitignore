@@ -23,6 +23,9 @@ build/
 
 # pytest
 .pytest_cache/
+/test_results/
+/_test_results/
+/__test_results/
 
 # OMC (oh-my-claudecode)
 .omc/
@@ -49,13 +52,4 @@ require.md
 
 # One-off iteration screenshots / overview captures
 /iter*_overview*.png
-
-# Per-iteration test artifacts (XML, logs); keep curated audit MDs
-/_test_results/iter1_*
-/_test_results/iter1b_*
-/_test_results/iter2_*
-/_test_results/iter3_*
-/_test_results/iter4_*
-/_test_results/iter6_*
-/_test_results/iter7_*
-/_test_results/SIMULATOR_SAAS_REVIEW.md
+.gstack/

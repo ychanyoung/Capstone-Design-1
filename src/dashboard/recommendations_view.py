@@ -729,6 +729,7 @@ def _render_cost_benefit_analysis(
             y="expected_revenue_saved_krw",
             color=color_col,
             size=size_col,
+            render_mode="svg",
             title=_tr("Cost vs Revenue Saved per Customer"),
             labels={
                 "estimated_cost_krw": f"{_tr('Estimated Cost')} ({currency})",

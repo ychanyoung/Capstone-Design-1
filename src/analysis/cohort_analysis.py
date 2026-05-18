@@ -408,6 +408,10 @@ class CohortAnalyzer:
         else:
             retention_matrix = retention_pivot
 
+        # Retention is a cumulative survival-style measure in this dashboard:
+        # once a customer is absent from a later cohort period, a later purchase
+        # must not make the displayed retention curve increase again.
+        retention_matrix = retention_matrix.sort_index(axis=1).cummin(axis=1)
         return retention_matrix
 
     # ------------------------------------------------------------------

@@ -1122,6 +1122,39 @@ class DashboardDataLoader:
         self._record_artifact_issue(artifact_name, issue)
         return self._empty_frame(empty_columns, artifact_name, issue)
 
+    def load_cohort_sizes(self) -> pd.DataFrame:
+        """Load acquisition cohort sizes using the same signup basis as retention."""
+        empty_columns = ["Cohort", "Customers"]
+        path = self._customers_path()
+        if path is None:
+            return pd.DataFrame(columns=empty_columns)
+
+        try:
+            df = pd.read_csv(path, usecols=["customer_id", "signup_date"])
+        except (ValueError, FileNotFoundError):
+            return pd.DataFrame(columns=empty_columns)
+        except Exception as exc:
+            self._record_artifact_issue(
+                "cohort_sizes",
+                f"Customer cohort sizes could not be read from {path}: {exc}.",
+            )
+            return pd.DataFrame(columns=empty_columns)
+
+        signup = pd.to_datetime(df["signup_date"], errors="coerce")
+        valid = df.loc[signup.notna(), ["customer_id"]].copy()
+        valid["Cohort"] = signup[signup.notna()].dt.to_period("M").astype(str).values
+        if valid.empty:
+            return pd.DataFrame(columns=empty_columns)
+
+        sizes = (
+            valid.groupby("Cohort")["customer_id"]
+            .nunique()
+            .sort_index()
+            .reset_index(name="Customers")
+        )
+        self._clear_artifact_issue("cohort_sizes")
+        return sizes
+
     def load_cohort_retention_matrix(self) -> pd.DataFrame:
         """Load pre-computed cohort retention matrix.
 
@@ -1132,6 +1165,10 @@ class DashboardDataLoader:
         path = self._resolve_existing_path("cohort_retention_matrix.csv")
         if path is not None:
             df = pd.read_csv(path, index_col=0)
+            df.columns = [
+                int(col) if str(col).isdigit() else col
+                for col in df.columns
+            ]
             if df.shape[0] >= 2 and df.shape[1] >= 2:
                 self._clear_artifact_issue("cohort_retention_matrix")
                 return df
@@ -1232,14 +1269,211 @@ class DashboardDataLoader:
             self._clear_artifact_issue(artifact_name)
         return df
 
-    def load_mlflow_runs(self) -> pd.DataFrame:
+    def _load_live_mlflow_runs(self, max_results: int = 500) -> pd.DataFrame:
+        """Query the configured MLflow tracking backend for run history."""
+        mlflow_cfg = self.config.get("mlflow", {}) or {}
+        tracking_uri = mlflow_cfg.get("tracking_uri")
+        experiment_name = mlflow_cfg.get("experiment_name", "churn_prediction")
+        if not tracking_uri:
+            return pd.DataFrame()
+
+        try:
+            import mlflow  # type: ignore
+
+            mlflow.set_tracking_uri(tracking_uri)
+            client = mlflow.tracking.MlflowClient()
+            experiment_ids: List[str] = []
+            experiment_names: Dict[str, str] = {}
+
+            exp = client.get_experiment_by_name(experiment_name)
+            if exp is not None:
+                experiment_ids.append(exp.experiment_id)
+                experiment_names[exp.experiment_id] = exp.name
+            else:
+                for candidate in client.search_experiments():
+                    experiment_ids.append(candidate.experiment_id)
+                    experiment_names[candidate.experiment_id] = candidate.name
+
+            if not experiment_ids:
+                return pd.DataFrame()
+
+            try:
+                runs = client.search_runs(
+                    experiment_ids=experiment_ids,
+                    max_results=max_results,
+                    order_by=["attributes.start_time DESC"],
+                )
+            except Exception:
+                runs = client.search_runs(
+                    experiment_ids=experiment_ids,
+                    max_results=max_results,
+                )
+        except Exception as exc:
+            self._record_artifact_issue(
+                "mlflow_runs",
+                f"Live MLflow query unavailable; using cached artifact if present: {exc}.",
+            )
+            return pd.DataFrame()
+
+        records = []
+        for run in runs:
+            metrics = dict(run.data.metrics or {})
+            params = dict(run.data.params or {})
+            tags = dict(run.data.tags or {})
+            start_ms = run.info.start_time
+            end_ms = run.info.end_time
+            training_time_s = metrics.get("training_time_s")
+            if training_time_s is None and start_ms and end_ms:
+                training_time_s = max((end_ms - start_ms) / 1000.0, 0.0)
+            records.append({
+                "run_id": run.info.run_id,
+                "experiment_id": run.info.experiment_id,
+                "experiment_name": experiment_names.get(
+                    run.info.experiment_id, experiment_name,
+                ),
+                "model_type": (
+                    params.get("model_type")
+                    or tags.get("model_type")
+                    or tags.get("pipeline_stage")
+                    or tags.get("mlflow.runName")
+                    or "unknown"
+                ),
+                "auc": metrics.get("auc", metrics.get("auc_roc", np.nan)),
+                "precision": metrics.get("precision", np.nan),
+                "recall": metrics.get("recall", np.nan),
+                "f1_score": metrics.get(
+                    "f1_score", metrics.get("f1", np.nan),
+                ),
+                "accuracy": metrics.get("accuracy", np.nan),
+                "training_time_s": training_time_s
+                                   if training_time_s is not None
+                                   else np.nan,
+                "params_lr": params.get("lr", params.get("learning_rate", np.nan)),
+                "params_epochs": params.get("epochs", np.nan),
+                "timestamp": pd.to_datetime(
+                    start_ms, unit="ms", errors="coerce",
+                ),
+                "source": "live_mlflow",
+            })
+
+        if not records:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(records)
+        for metric in ["auc", "precision", "recall", "f1_score", "accuracy"]:
+            df[metric] = pd.to_numeric(df[metric], errors="coerce")
+        df = df[df["auc"].notna()].copy()
+        if df.empty:
+            return pd.DataFrame()
+        current_run_ids = self._current_mlflow_run_ids()
+        if current_run_ids:
+            current_df = df[df["run_id"].isin(current_run_ids)].copy()
+            if not current_df.empty:
+                df = current_df
+        df["training_time_s"] = pd.to_numeric(
+            df["training_time_s"], errors="coerce",
+        ).fillna(1.0).clip(lower=0.0)
+        df["params_lr"] = pd.to_numeric(df["params_lr"], errors="coerce")
+        df["params_epochs"] = (
+            pd.to_numeric(df["params_epochs"], errors="coerce")
+            .fillna(1.0)
+            .clip(lower=1e-6)
+        )
+        self._mark_real("mlflow_runs")
+        return df
+
+    def _current_mlflow_run_ids(self) -> set:
+        """Return MLflow run IDs recorded by the latest model_metrics.json."""
+        metrics_path = self._resolve_existing_path("model_metrics.json")
+        if metrics_path is None:
+            return set()
+        try:
+            payload = self._read_json(metrics_path)
+        except Exception:
+            return set()
+        run_info = payload.get("mlflow_runs", {}) if isinstance(payload, dict) else {}
+        run_ids = run_info.get("run_ids", {}) if isinstance(run_info, dict) else {}
+        if not isinstance(run_ids, dict):
+            return set()
+        return {str(value) for value in run_ids.values() if value}
+
+    def load_mlflow_runs(
+        self, as_artifact: bool = False,
+    ) -> Union[pd.DataFrame, DashboardArtifact]:
         """Load MLflow experiment run metrics.
 
         Returns:
             DataFrame with run_id, model_type, auc, precision, recall,
             f1_score, accuracy, training_time_s, timestamp.
         """
-        return self.load_model_performance_history()
+        live = self._load_live_mlflow_runs()
+        if not live.empty:
+            if as_artifact:
+                return DashboardArtifact(
+                    data=live,
+                    is_real=True,
+                    source_path=str(
+                        self.config.get("mlflow", {}).get("tracking_uri", "")
+                    ),
+                    name="mlflow_runs",
+                    extra={"source": "live_mlflow"},
+                )
+            return live
+
+        cached = self.load_model_performance_history()
+        reason = (
+            self.get_artifact_issue("mlflow_runs")
+            or "Live MLflow run query returned no rows; using cached "
+               "model_performance_history.csv."
+        )
+        if as_artifact:
+            return DashboardArtifact(
+                data=cached,
+                is_real=False,
+                source_path=str(
+                    self._resolve_existing_path(
+                        "model_performance_history.csv", "mlflow_runs.csv",
+                    ) or ""
+                ),
+                reason=reason,
+                name="mlflow_runs",
+                extra={"source": "cached_model_performance_history"},
+            )
+        return cached
+
+    def get_active_model(self) -> Dict[str, str]:
+        """Return the best available model stamp for dashboard captions."""
+        history = self.load_scoring_history()
+        if not history.empty:
+            for column in ("model_version", "model_type"):
+                if column in history.columns:
+                    value = history[column].dropna().astype(str)
+                    value = value[value.str.len() > 0]
+                    if not value.empty:
+                        version = value.iloc[-1]
+                        name = "ensemble"
+                        if "model_type" in history.columns:
+                            model_values = (
+                                history["model_type"].dropna().astype(str)
+                            )
+                            if not model_values.empty:
+                                name = model_values.iloc[-1]
+                        if name == version and "_v" in name:
+                            name = name.split("_v", 1)[0]
+                        return {"name": name, "version": version}
+
+        metrics = self.load_model_metrics()
+        if metrics:
+            candidates = [
+                (name, vals.get("auc", float("-inf")))
+                for name, vals in metrics.items()
+                if isinstance(vals, dict)
+            ]
+            if candidates:
+                best_name, _ = max(candidates, key=lambda item: item[1])
+                return {"name": best_name, "version": "current"}
+
+        return {}
 
     def load_roc_data(
         self, as_artifact: bool = False

@@ -18,6 +18,7 @@ All configurable parameters are loaded from config/simulator_config.yaml.
 """
 
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -268,8 +269,31 @@ def load_config() -> Dict[str, Any]:
     """
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
-    return {}
+            config = yaml.safe_load(f) or {}
+    else:
+        config = {}
+
+    mlflow_cfg = config.setdefault("mlflow", {})
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
+    if tracking_uri:
+        mlflow_cfg["tracking_uri"] = tracking_uri
+    artifact_location = (
+        os.environ.get("MLFLOW_ARTIFACT_LOCATION")
+        or os.environ.get("MLFLOW_ARTIFACT_ROOT")
+    )
+    if artifact_location:
+        mlflow_cfg["artifact_location"] = artifact_location
+
+    redis_cfg = config.setdefault("redis", {})
+    if os.environ.get("REDIS_HOST"):
+        redis_cfg["host"] = os.environ["REDIS_HOST"]
+    if os.environ.get("REDIS_PORT"):
+        try:
+            redis_cfg["port"] = int(os.environ["REDIS_PORT"])
+        except ValueError:
+            pass
+
+    return config
 
 
 def get_data_loader(config: Dict[str, Any]):
@@ -292,6 +316,7 @@ def _show_loader_issue(st, data_loader, artifact_name: str, fallback: str) -> No
         _lang = get_lang()
         _tr = lambda s: tr(s, _lang)
     except Exception:
+        _lang = "en"
         _tr = lambda s: s
     issue = (
         data_loader.get_artifact_issue(artifact_name)
@@ -310,9 +335,22 @@ def _show_prediction_coverage(st, data_loader) -> None:
         _lang = get_lang()
         _tr = lambda s: tr(s, _lang)
     except Exception:
+        _lang = "en"
         _tr = lambda s: s
     coverage = data_loader.get_prediction_coverage()
     message = coverage.get("message", "")
+    if _lang == "ko":
+        total = coverage.get("customer_count", 0) or 0
+        covered = coverage.get("covered_count", 0) or 0
+        missing = coverage.get("missing_count", 0) or 0
+        message = (
+            f"이탈 예측은 전체 {total:,}명 고객을 포함합니다."
+            if coverage.get("is_full_coverage")
+            else (
+                f"이탈 예측은 {covered:,}/{total:,}명 고객을 포함하며, "
+                f"{missing:,}명이 누락되었습니다."
+            )
+        )
     if coverage.get("is_full_coverage"):
         st.success(_tr(message) if isinstance(message, str) else message)
     else:
@@ -340,6 +378,7 @@ def render_overview(st_module, config: Dict, data_loader=None):
         _lang = get_lang()
         _tr = lambda s: tr(s, _lang)
     except Exception:
+        _lang = "en"
         _tr = lambda s: s  # fallback if helper unavailable
 
     st = st_module
@@ -577,6 +616,7 @@ def render_model_performance(st_module, config: Dict, data_loader=None):
         _lang = get_lang()
         _tr = lambda s: tr(s, _lang)
     except Exception:
+        _lang = "en"
         _tr = lambda s: s  # fallback if helper unavailable
 
     st = st_module
@@ -649,11 +689,18 @@ def render_model_performance(st_module, config: Dict, data_loader=None):
     # AUC-margin disclosure (visible footnote — not just a tooltip — so
     # the "Best Model" claim cannot be over-read).
     if auc_margin < 0.005:
-        st.caption(_tr(
-            f"ℹ️ AUC spread across the three models is {auc_margin:.4f} "
-            f"(<0.005). No DeLong significance test was run; the "
-            f"\"Best Model\" label is indicative only."
-        ))
+        if _lang == "ko":
+            st.caption(
+                f"ℹ️ 세 모델의 AUC 격차는 {auc_margin:.4f}(<0.005)입니다. "
+                "DeLong 유의성 검정은 실행하지 않았으므로 \"최고 모델\" "
+                "표시는 참고용입니다."
+            )
+        else:
+            st.caption(
+                f"ℹ️ AUC spread across the three models is {auc_margin:.4f} "
+                f"(<0.005). No DeLong significance test was run; the "
+                f"\"Best Model\" label is indicative only."
+            )
 
     # -----------------------------------------------------------------
     # Performance Comparison Table
@@ -693,19 +740,32 @@ def render_model_performance(st_module, config: Dict, data_loader=None):
         if all(pd.notna(v) for v in auc_vals):
             spread = max(auc_vals) - min(auc_vals)
             spread_pp = spread * 100
-            st.info(_tr(
-                f"Why are the three AUCs so close? ML / DL / Ensemble "
-                f"agree within {spread_pp:.2f} percentage points "
-                f"because the DL model shares ~33 static features with "
-                f"the ML model and the simulator's churn signal is "
-                f"dominated by recency/frequency. The Ensemble is a "
-                f"weighted blend of two strongly correlated score "
-                f"distributions, so it cannot move much past either "
-                f"parent. This is a data-ceiling effect, not label "
-                f"leakage — leakage was explicitly blocked by the "
-                f"future-window split (`observation_window_days=60`) "
-                f"applied in src/main.py."
-            ))
+            if _lang == "ko":
+                st.info(
+                    f"세 모델의 AUC가 가까운 이유: ML / DL / Ensemble의 "
+                    f"차이는 {spread_pp:.2f}%p 이내입니다. DL 모델이 ML "
+                    "모델과 약 33개 정적 피처를 공유하고, 시뮬레이터의 "
+                    "이탈 신호가 최근성/빈도에 크게 좌우되기 때문입니다. "
+                    "Ensemble은 강하게 상관된 두 점수 분포의 가중 평균이라 "
+                    "각 부모 모델을 크게 넘어서기 어렵습니다. 이는 라벨 "
+                    "누설이 아니라 데이터 한계 효과이며, 누설은 "
+                    "`observation_window_days=60` 미래 윈도우 분리로 "
+                    "차단했습니다."
+                )
+            else:
+                st.info(
+                    f"Why are the three AUCs so close? ML / DL / Ensemble "
+                    f"agree within {spread_pp:.2f} percentage points "
+                    f"because the DL model shares ~33 static features with "
+                    f"the ML model and the simulator's churn signal is "
+                    f"dominated by recency/frequency. The Ensemble is a "
+                    f"weighted blend of two strongly correlated score "
+                    f"distributions, so it cannot move much past either "
+                    f"parent. This is a data-ceiling effect, not label "
+                    f"leakage — leakage was explicitly blocked by the "
+                    f"future-window split (`observation_window_days=60`) "
+                    f"applied in src/main.py."
+                )
     except Exception:
         pass
 
@@ -879,6 +939,25 @@ def render_model_performance(st_module, config: Dict, data_loader=None):
     st.subheader(_tr("MLflow Experiment Runs"))
     mlflow_runs = data_loader.load_mlflow_runs()
     if not mlflow_runs.empty:
+        mlflow_runs = mlflow_runs.copy()
+        if "training_time_s" not in mlflow_runs.columns:
+            mlflow_runs["training_time_s"] = 1.0
+        mlflow_runs["training_time_s"] = (
+            pd.to_numeric(mlflow_runs["training_time_s"], errors="coerce")
+            .fillna(1.0)
+            .clip(lower=0.0)
+        )
+        if "params_epochs" not in mlflow_runs.columns:
+            mlflow_runs["params_epochs"] = 1.0
+        mlflow_runs["params_epochs"] = (
+            pd.to_numeric(mlflow_runs["params_epochs"], errors="coerce")
+            .fillna(1.0)
+            .clip(lower=1e-6)
+        )
+        if "params_lr" in mlflow_runs.columns:
+            mlflow_runs["params_lr"] = pd.to_numeric(
+                mlflow_runs["params_lr"], errors="coerce",
+            )
         st.dataframe(
             mlflow_runs.style.highlight_max(
                 subset=["auc", "precision", "recall", "f1_score"],
@@ -915,6 +994,7 @@ def render_model_performance(st_module, config: Dict, data_loader=None):
             mlflow_runs, x="training_time_s", y="auc",
             size="params_epochs",
             color="model_type",
+            render_mode="svg",
             title=_tr("AUC vs Training Time Trade-off"),
             labels={
                 "training_time_s": _tr("Training Time (s)"),
@@ -1120,6 +1200,96 @@ def render_segmentation(st_module, config: Dict, data_loader=None):
             },
         )
         st.plotly_chart(fig_risk_seg, use_container_width=True)
+
+    # -----------------------------------------------------------------
+    # Priority Score by Segment (Uplift × CLV)
+    # -----------------------------------------------------------------
+    st.subheader(_tr("Retention Priority Score by Segment"))
+    seg_summary_path = (
+        data_loader._resolve_existing_path("segment_summary.csv")
+        if data_loader is not None
+        else None
+    )
+    seg_summary = None
+    if seg_summary_path is not None:
+        try:
+            seg_summary = pd.read_csv(seg_summary_path)
+        except Exception:
+            seg_summary = None
+
+    if seg_summary is not None and "avg_priority_score" in seg_summary.columns:
+        seg_summary_sorted = seg_summary.sort_values("avg_priority_score", ascending=True)
+
+        fig_priority = px.bar(
+            seg_summary_sorted,
+            x="avg_priority_score",
+            y="segment",
+            orientation="h",
+            title=_tr("Average Priority Score by Segment (Uplift × CLV)"),
+            color="avg_priority_score",
+            color_continuous_scale="Viridis",
+            text="avg_priority_score",
+            labels={
+                "avg_priority_score": _tr("Avg Priority Score"),
+                "segment": _tr("Segment"),
+            },
+        )
+        fig_priority.update_traces(texttemplate="%{text:.2f}", textposition="outside")
+        fig_priority.update_layout(coloraxis_showscale=False)
+        st.plotly_chart(fig_priority, use_container_width=True)
+
+        # Scatter: churn probability vs priority score, bubble = customer count
+        if {"avg_churn_probability", "count"}.issubset(seg_summary.columns):
+            fig_ps_scatter = px.scatter(
+                seg_summary,
+                x="avg_churn_probability",
+                y="avg_priority_score",
+                size="count",
+                color="segment",
+                text="segment",
+                render_mode="svg",
+                title=_tr(
+                    "Priority Score vs Churn Probability per Segment "
+                    "(bubble = customer count)"
+                ),
+                labels={
+                    "avg_churn_probability": _tr("Avg Churn Probability"),
+                    "avg_priority_score": _tr("Avg Priority Score (Uplift × CLV)"),
+                },
+            )
+            fig_ps_scatter.update_traces(textposition="top center")
+            st.plotly_chart(fig_ps_scatter, use_container_width=True)
+    else:
+        # Fallback: compute avg priority_score from predictions if column exists
+        if "priority_score" in predictions.columns:
+            ps_by_seg = (
+                predictions.groupby("segment")["priority_score"]
+                .mean()
+                .reset_index()
+                .sort_values("priority_score", ascending=True)
+            )
+            fig_priority = px.bar(
+                ps_by_seg,
+                x="priority_score",
+                y="segment",
+                orientation="h",
+                title=_tr("Average Priority Score by Segment (Uplift × CLV)"),
+                color="priority_score",
+                color_continuous_scale="Viridis",
+                text="priority_score",
+                labels={
+                    "priority_score": _tr("Avg Priority Score"),
+                    "segment": _tr("Segment"),
+                },
+            )
+            fig_priority.update_traces(texttemplate="%{text:.2f}", textposition="outside")
+            fig_priority.update_layout(coloraxis_showscale=False)
+            st.plotly_chart(fig_priority, use_container_width=True)
+        else:
+            st.info(_tr(
+                "Priority score data unavailable. Run the pipeline with "
+                "--mode segment to generate it."
+            ))
 
     # Segment details — iter11 P03 #1 fix:
     # The legacy config-driven 8-row table listed names that the runtime
@@ -1517,6 +1687,7 @@ def render_budget_optimization(st_module, config: Dict, data_loader=None):
             y="roi_multiplier",
             size="allocated_budget",
             color="channel",
+            render_mode="svg",
             title=_tr("Efficiency Frontier: Cost vs ROI"),
             labels={
                 "cost_per_action": f"{_tr('Cost per Action')} ({currency})",
@@ -1896,6 +2067,7 @@ def render_ab_testing(st_module, config: Dict, data_loader=None):
                 size="Cohen's h",
                 color="Significant",
                 text="Experiment",
+                render_mode="svg",
                 title=_tr("Statistical Power vs p-value"),
                 color_discrete_map={
                     "Yes": "#2ecc71", "No": "#e74c3c",
@@ -2290,11 +2462,14 @@ def render_survival_analysis(st_module, config: Dict, data_loader=None):
         median_surv = curve_data.get("median_survival_days")
         surv_prob_list = curve_data.get("survival_prob", [])
         final_surv = surv_prob_list[-1] if surv_prob_list else 0
+        median_display = (
+            f"{float(median_surv):g}"
+            if median_surv is not None and pd.notna(median_surv)
+            else ">360"
+        )
         median_data.append({
             "Segment": seg_name,
-            "Median Survival (days)": (
-                median_surv if median_surv else ">360"
-            ),
+            "Median Survival (days)": median_display,
             "Final Survival Prob": final_surv,
             "Risk Level": (
                 "Low" if final_surv > 0.7
@@ -2506,6 +2681,7 @@ def render_recommendations(st_module, config: Dict, data_loader=None):
         _lang = get_lang()
         _tr = lambda s: tr(s, _lang)
     except Exception:
+        _lang = "en"
         _tr = lambda s: s
 
     if data_loader is None:
@@ -2623,6 +2799,7 @@ def _render_recommendations_legacy(st_module, config: Dict, data_loader=None):
         recs, x="priority_score", y="expected_uplift",
         color="recommendation_type",
         size="priority_score",
+        render_mode="svg",
         title=_tr("Priority Score vs Expected Uplift"),
         labels={
             "priority_score": "Priority Score",
@@ -2753,11 +2930,18 @@ def render_clv(st_module, config: Dict, data_loader=None):
             "CLV data has partial coverage.",
         )
     if not predictions.empty:
+        # CLV artifacts may carry a legacy binary churn label named
+        # churn_probability. Keep the prediction artifact as the source of
+        # churn risk so merge suffixes cannot hide the real probability column.
+        clv_base = clv_data.drop(
+            columns=["churn_probability", "risk_level"],
+            errors="ignore",
+        )
         prediction_cols = [
             c for c in ["customer_id", "churn_probability", "risk_level"]
             if c in predictions.columns
         ]
-        predictions = clv_data.merge(
+        predictions = clv_base.merge(
             predictions[prediction_cols],
             on="customer_id",
             how="left",
@@ -2904,6 +3088,7 @@ def render_clv(st_module, config: Dict, data_loader=None):
     fig_scatter = px.scatter(
         scatter_df, x="churn_probability", y="clv_predicted",
         color="segment",
+        render_mode="svg",
         title=_tr("CLV vs Churn Probability (High CLV + High Churn = Priority)"),
         labels={
             "churn_probability": "Churn Probability",
@@ -3192,6 +3377,7 @@ def render_uplift(st_module, config: Dict, data_loader=None):
     fig_scatter = px.scatter(
         uplift, x="uplift_score", y="treatment_effect",
         color="segment",
+        render_mode="svg",
         title=_tr("Uplift Score vs Treatment Effect by Segment"),
         labels={
             "uplift_score": "Uplift Score",
@@ -3201,6 +3387,31 @@ def render_uplift(st_module, config: Dict, data_loader=None):
     )
     fig_scatter.add_hline(y=0, line_dash="dash", line_color="gray")
     fig_scatter.add_vline(x=0, line_dash="dash", line_color="gray")
+    # Quadrant label annotations
+    quadrant_labels = [
+        dict(x=0.98, y=0.98, text="Persuadable", xanchor="right", yanchor="top",
+             bgcolor="rgba(46,204,113,0.15)", bordercolor="#2ecc71"),
+        dict(x=0.02, y=0.98, text="Sure Thing", xanchor="left", yanchor="top",
+             bgcolor="rgba(52,152,219,0.15)", bordercolor="#3498db"),
+        dict(x=0.02, y=0.02, text="Lost Cause", xanchor="left", yanchor="bottom",
+             bgcolor="rgba(149,165,166,0.15)", bordercolor="#95a5a6"),
+        dict(x=0.98, y=0.02, text="Sleeping Dog", xanchor="right", yanchor="bottom",
+             bgcolor="rgba(231,76,60,0.15)", bordercolor="#e74c3c"),
+    ]
+    for q in quadrant_labels:
+        fig_scatter.add_annotation(
+            x=q["x"], y=q["y"],
+            xref="paper", yref="paper",
+            text=f"<b>{q['text']}</b>",
+            showarrow=False,
+            font=dict(size=12),
+            bgcolor=q["bgcolor"],
+            bordercolor=q["bordercolor"],
+            borderwidth=1,
+            borderpad=4,
+            xanchor=q["xanchor"],
+            yanchor=q["yanchor"],
+        )
     st.plotly_chart(fig_scatter, use_container_width=True)
 
     # -----------------------------------------------------------------
@@ -3393,16 +3604,28 @@ def render_retention_campaign(st_module, config: Dict, data_loader=None):
     # (high/mid/low_value × persuadable / sure_thing / lost_cause /
     # sleeping_dog). Surface a one-paragraph crosswalk so a reader can
     # trace customers across sections of the same page.
-    st.info(
-        "**Segment taxonomy crosswalk.** Section 1 (CLV Overview) uses "
-        "**behavioral segments** (vip_loyal, dormant, …); Sections 2–4 "
-        "(Uplift / Budget / ROI) use **uplift segments** (high/mid/low_"
-        "value × persuadable / sure_thing / lost_cause / sleeping_dog). "
-        "Crosswalk: behavioral *dormant* ≈ uplift *sleeping_dog* / "
-        "*high_value_lost_cause*. Numbers across sections operate on "
-        "the same 20,000 customers — the segment column simply uses two "
-        "different lenses."
-    )
+    if _lang == "ko":
+        st.info(
+            "**세그먼트 분류 체계 안내.** 1번 섹션(CLV 개요)은 "
+            "행동 세그먼트(vip_loyal, dormant 등)를 사용하고, "
+            "2-4번 섹션(업리프트 / 예산 / ROI)은 업리프트 세그먼트"
+            "(high/mid/low_value × persuadable / sure_thing / lost_cause / "
+            "sleeping_dog)를 사용합니다. 예: 행동 세그먼트 dormant는 "
+            "업리프트 관점에서 sleeping_dog 또는 high_value_lost_cause와 "
+            "가깝습니다. 모든 섹션은 동일한 20,000명 고객을 다루며, "
+            "세그먼트 컬럼만 서로 다른 관점으로 표시됩니다."
+        )
+    else:
+        st.info(
+            "**Segment taxonomy crosswalk.** Section 1 (CLV Overview) uses "
+            "**behavioral segments** (vip_loyal, dormant, …); Sections 2–4 "
+            "(Uplift / Budget / ROI) use **uplift segments** (high/mid/low_"
+            "value × persuadable / sure_thing / lost_cause / sleeping_dog). "
+            "Crosswalk: behavioral *dormant* ≈ uplift *sleeping_dog* / "
+            "*high_value_lost_cause*. Numbers across sections operate on "
+            "the same 20,000 customers — the segment column simply uses two "
+            "different lenses."
+        )
     st.subheader(_tr("1. Customer Lifetime Value Overview"))
 
     if not predictions.empty and "clv_predicted" in predictions.columns:
@@ -3450,6 +3673,7 @@ def render_retention_campaign(st_module, config: Dict, data_loader=None):
             fig_bubble = px.scatter(
                 seg_summary, x="avg_churn", y="avg_clv",
                 size="count", color="segment",
+                render_mode="svg",
                 title=_tr("Segment CLV vs Churn Risk (size = customers)"),
                 labels={
                     "avg_churn": "Avg Churn Probability",
@@ -3654,6 +3878,7 @@ def render_retention_campaign(st_module, config: Dict, data_loader=None):
             y="expected_revenue_saved_krw",
             size="expected_retained",
             color="segment",
+            render_mode="svg",
             title=_tr("Budget Efficiency: Spend vs Revenue Saved"),
             labels={
                 "allocated_budget_krw": f"Budget Spent ({currency})",
@@ -4169,6 +4394,7 @@ def render_churn_analytics(st_module, config: Dict, data_loader=None):
             x="churn_probability",
             y="clv_predicted",
             color="risk_level",
+            render_mode="svg",
             title=_tr("Churn Probability vs Predicted CLV"),
             labels={
                 "churn_probability": _tr("Churn Probability"),
@@ -4253,6 +4479,16 @@ def render_cohort_analysis(st_module, config: Dict, data_loader=None):
         st.warning(_tr("No cohort analysis data available."))
         return
 
+    cohort_data_cache: Dict[str, pd.DataFrame] = {}
+
+    def _load_cohort_data_once() -> pd.DataFrame:
+        if "data" not in cohort_data_cache:
+            try:
+                cohort_data_cache["data"] = data_loader.load_cohort_data()
+            except Exception:
+                cohort_data_cache["data"] = pd.DataFrame()
+        return cohort_data_cache["data"]
+
     # -----------------------------------------------------------------
     # KPI Summary
     # -----------------------------------------------------------------
@@ -4294,7 +4530,44 @@ def render_cohort_analysis(st_module, config: Dict, data_loader=None):
                 seen_last = True
         return result
 
-    unobserved_mask = retention_matrix.apply(_is_unobserved_trail, axis=1)
+    def _is_incomplete_periods() -> pd.DataFrame:
+        result = pd.DataFrame(
+            False,
+            index=retention_matrix.index,
+            columns=retention_matrix.columns,
+        )
+        cohort_data = _load_cohort_data_once()
+        if cohort_data.empty or "event_date" not in cohort_data.columns:
+            return result
+        max_event_date = pd.to_datetime(
+            cohort_data["event_date"], errors="coerce",
+        ).max()
+        if pd.isna(max_event_date):
+            return result
+        max_event_date = max_event_date.normalize()
+
+        for cohort_label in retention_matrix.index:
+            try:
+                cohort_start = pd.Period(str(cohort_label), freq="M").start_time
+            except (TypeError, ValueError):
+                continue
+            for col in retention_matrix.columns:
+                try:
+                    period_num = int(col)
+                except (TypeError, ValueError):
+                    continue
+                period_end = cohort_start + pd.Timedelta(
+                    days=(period_num + 1) * 30 - 1
+                )
+                if period_end.normalize() > max_event_date:
+                    result.loc[cohort_label, col] = True
+        return result
+
+    unobserved_mask = (
+        retention_matrix.apply(_is_unobserved_trail, axis=1)
+        | _is_incomplete_periods()
+    )
+    observed_retention_matrix = retention_matrix.where(~unobserved_mask)
 
     # Average final-period retention — but only over OBSERVED cells in the
     # last column. If every cohort has the last column unobserved, we
@@ -4303,7 +4576,7 @@ def render_cohort_analysis(st_module, config: Dict, data_loader=None):
     last_col = retention_matrix.columns[-1]
     last_col_observed_mask = ~unobserved_mask[last_col]
     if last_col_observed_mask.any():
-        avg_final_retention = retention_matrix.loc[
+        avg_final_retention = observed_retention_matrix.loc[
             last_col_observed_mask, last_col,
         ].mean()
         avg_final_label = _tr("Avg Final Retention")
@@ -4311,9 +4584,7 @@ def render_cohort_analysis(st_module, config: Dict, data_loader=None):
         # Fall back to per-cohort deepest-observed value.
         per_cohort_final = []
         for cohort_label in retention_matrix.index:
-            row = retention_matrix.loc[cohort_label]
-            row_unobs = unobserved_mask.loc[cohort_label]
-            observed = row[~row_unobs].dropna()
+            observed = observed_retention_matrix.loc[cohort_label].dropna()
             if not observed.empty:
                 per_cohort_final.append(float(observed.iloc[-1]))
         avg_final_retention = (
@@ -4336,12 +4607,20 @@ def render_cohort_analysis(st_module, config: Dict, data_loader=None):
 
     # iter9 audit P04 #18: Limited cohort window.
     if n_cohorts < 6:
-        st.info(
-            f"{_tr('Limited cohort window — only')} {n_cohorts} "
-            + _tr("monthly cohorts are available. Production cohort analysis "
-            "typically uses ≥6–12 cohorts; generate more historical data for "
-            "trend reliability.")
-        )
+        if _lang == "ko":
+            st.info(
+                f"제한된 코호트 기간 — 현재 월별 코호트가 {n_cohorts}개뿐입니다. "
+                "운영 환경 코호트 분석은 일반적으로 6-12개 이상의 코호트를 "
+                "사용합니다. 추세 신뢰도를 높이려면 더 긴 과거 데이터를 "
+                "생성하세요."
+            )
+        else:
+            st.info(
+                f"{_tr('Limited cohort window — only')} {n_cohorts} "
+                + _tr("monthly cohorts are available. Production cohort analysis "
+                "typically uses ≥6–12 cohorts; generate more historical data for "
+                "trend reliability.")
+            )
 
     # iter9 audit P04 #16: monotonicity violations (e.g. Apr 2024 P7→P8).
     # Detect any cohort whose retention rises across consecutive observed
@@ -4419,7 +4698,7 @@ def render_cohort_analysis(st_module, config: Dict, data_loader=None):
     st.subheader(_tr("Retention Curves by Cohort"))
     fig_lines = go.Figure()
     for cohort_label in retention_matrix.index:
-        values = retention_matrix.loc[cohort_label].dropna()
+        values = observed_retention_matrix.loc[cohort_label].dropna()
         fig_lines.add_trace(go.Scatter(
             x=[int(c) for c in values.index],
             y=values.values * 100,
@@ -4438,7 +4717,7 @@ def render_cohort_analysis(st_module, config: Dict, data_loader=None):
     # Average Retention Curve
     # -----------------------------------------------------------------
     st.subheader(_tr("Average Retention Curve"))
-    avg_retention = retention_matrix.mean(axis=0)
+    avg_retention = observed_retention_matrix.mean(axis=0).dropna()
 
     fig_avg = go.Figure()
     fig_avg.add_trace(go.Scatter(
@@ -4463,25 +4742,15 @@ def render_cohort_analysis(st_module, config: Dict, data_loader=None):
     # -----------------------------------------------------------------
     if 0 in retention_matrix.columns:
         st.subheader(_tr("Cohort Sizes"))
-        # Period 0 retention is always 1.0, so we need raw cohort data
-        # Show relative sizes from the data loader
-        cohort_data = data_loader.load_cohort_data()
-        if not cohort_data.empty and "customer_id" in cohort_data.columns:
-            cohort_data["event_date"] = pd.to_datetime(
-                cohort_data["event_date"]
-            )
-            first_event = cohort_data.groupby("customer_id")[
-                "event_date"
-            ].min().reset_index()
-            first_event["cohort"] = (
-                first_event["event_date"].dt.to_period("M").astype(str)
-            )
-            cohort_sizes = (
-                first_event["cohort"].value_counts()
-                .sort_index().reset_index()
-            )
-            cohort_sizes.columns = ["Cohort", "Customers"]
+        if hasattr(data_loader, "load_cohort_sizes"):
+            cohort_sizes = data_loader.load_cohort_sizes()
+        else:
+            cohort_sizes = pd.DataFrame(columns=["Cohort", "Customers"])
+        cohort_sizes = cohort_sizes[
+            cohort_sizes["Cohort"].isin(retention_matrix.index.astype(str))
+        ]
 
+        if not cohort_sizes.empty:
             fig_sizes = px.bar(
                 cohort_sizes, x="Cohort", y="Customers",
                 title=_tr("New Customers per Cohort"),
@@ -4490,13 +4759,14 @@ def render_cohort_analysis(st_module, config: Dict, data_loader=None):
                 text="Customers",
             )
             fig_sizes.update_traces(textposition="outside")
+            fig_sizes.update_xaxes(type="category")
             st.plotly_chart(fig_sizes, use_container_width=True)
 
     # -----------------------------------------------------------------
     # Period-over-Period Retention Drop
     # -----------------------------------------------------------------
     st.subheader(_tr("Period-over-Period Retention Change"))
-    avg_ret = retention_matrix.mean(axis=0)
+    avg_ret = observed_retention_matrix.mean(axis=0).dropna()
     if len(avg_ret) > 1:
         period_labels = [int(c) for c in avg_ret.index]
         retention_vals = avg_ret.values * 100
@@ -4525,8 +4795,11 @@ def render_cohort_analysis(st_module, config: Dict, data_loader=None):
     # Retention data table
     # -----------------------------------------------------------------
     st.subheader(_tr("Retention Matrix (Raw Data)"))
-    display_matrix = (retention_matrix * 100).round(1)
+    display_matrix = (observed_retention_matrix * 100).round(1)
     display_matrix.columns = [f"Period {c}" for c in display_matrix.columns]
+    display_matrix = display_matrix.applymap(
+        lambda value: "—" if pd.isna(value) else f"{float(value):g}"
+    )
     st.dataframe(display_matrix, use_container_width=True)
 
 
@@ -5050,36 +5323,21 @@ def _render_retention_offers_tab(st_module, config: Dict, data_loader):
     if "priority_score" in filtered.columns:
         filtered = filtered.sort_values("priority_score", ascending=False)
 
-    # KPI cards — iter9 audit P13b #10: add denominator on Total Offers
-    # (44 / 200 recently scored). iter9 audit P13b #9: ROI math was wrong
-    # (8.0x display vs 8.99x arithmetic) — use compute_overall_roi for
-    # the canonical "treated" scope and unify rounding (.99→8.99x not 8.0x).
+    # KPI cards. Use the retention-offer artifact as the denominator; the
+    # scoring_history slice is only a recent sample, so comparing full-population
+    # offers against 200 sampled scores can produce impossible percentages.
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    # iter13 G3 P1 fix: only use scoring_history for the denominator if it
-    # is a real artifact, otherwise the "N / scored" ratio is meaningless.
-    try:
-        _sh_for_denom, _sh_is_real, _ = _load_as_artifact(
-            data_loader, "load_scoring_history",
-        )
-        if (
-            _sh_is_real
-            and _sh_for_denom is not None
-            and not (hasattr(_sh_for_denom, "empty") and _sh_for_denom.empty)
-        ):
-            scored_n = len(_sh_for_denom)
-        else:
-            scored_n = 0
-    except Exception:
-        scored_n = 0
+    offer_universe_n = len(offers)
     with kpi1:
         offers_n = len(filtered)
-        if scored_n > 0:
-            pct = (offers_n / scored_n) * 100
+        if offer_universe_n > 0:
+            pct = (offers_n / offer_universe_n) * 100
             st.metric(
                 _tr("Total Offers"),
-                f"{offers_n:,} / {scored_n:,}",
-                help=f"{offers_n:,} retention offers issued out of "
-                     f"{scored_n:,} customers recently scored ({pct:.1f}%).",
+                f"{offers_n:,} / {offer_universe_n:,}",
+                help=f"{offers_n:,} retention-offer rows match the current "
+                     f"filters out of {offer_universe_n:,} customers in "
+                     f"`retention_offers.csv` ({pct:.1f}%).",
             )
         else:
             st.metric(_tr("Total Offers"), format_count(offers_n))
@@ -5174,6 +5432,7 @@ def _render_retention_offers_tab(st_module, config: Dict, data_loader):
         filtered, x="churn_probability", y="expected_uplift",
         color="risk_level",
         size="expected_revenue_saved_krw",
+        render_mode="svg",
         hover_data=["customer_id", "segment", "offer_type", "offer_detail"],
         color_discrete_map={
             "low": "#2ecc71", "medium": "#f39c12",
@@ -5779,78 +6038,49 @@ def render_mlflow_experiments(st_module, config: Dict, data_loader=None):
     # -----------------------------------------------------------------
     st.subheader(_tr("Experiment Run History"))
 
-    mlflow_runs = pd.DataFrame()
-    runs_source = "cached"
-    if mlflow_connected:
-        try:
-            import mlflow as _mlflow_lib  # type: ignore
-            _mlflow_lib.set_tracking_uri(tracking_uri)
-            try:
-                _client = _mlflow_lib.tracking.MlflowClient()
-                _exp = _client.get_experiment_by_name(experiment_name)
-                if _exp is not None:
-                    _runs = _client.search_runs(
-                        experiment_ids=[_exp.experiment_id],
-                        max_results=500,
-                    )
-                    if _runs:
-                        _records = []
-                        for _r in _runs:
-                            _m = dict(_r.data.metrics or {})
-                            _p = dict(_r.data.params or {})
-                            _records.append({
-                                "run_id": _r.info.run_id,
-                                "model_type": (
-                                    _p.get("model_type")
-                                    or _r.data.tags.get("model_type")
-                                    or "unknown"
-                                ),
-                                "auc": _m.get("auc")
-                                       or _m.get("auc_roc")
-                                       or 0.0,
-                                "precision": _m.get("precision", 0.0),
-                                "recall": _m.get("recall", 0.0),
-                                "f1_score": _m.get("f1_score", 0.0),
-                                "accuracy": _m.get("accuracy", 0.0),
-                                "training_time_s": _m.get(
-                                    "training_time_s", 0.0,
-                                ),
-                                "params_lr": float(_p.get("lr", 0))
-                                              if _p.get("lr") else 0.0,
-                                "params_epochs": int(float(_p.get("epochs", 0)))
-                                              if _p.get("epochs") else 0,
-                                "timestamp": pd.to_datetime(
-                                    _r.info.start_time, unit="ms",
-                                    errors="coerce",
-                                ),
-                            })
-                        mlflow_runs = pd.DataFrame(_records)
-                        runs_source = "live"
-            except Exception:
-                mlflow_runs = pd.DataFrame()
-        except ImportError:
-            mlflow_runs = pd.DataFrame()
+    try:
+        mlflow_result = data_loader.load_mlflow_runs(as_artifact=True)
+    except TypeError:
+        mlflow_result = data_loader.load_mlflow_runs()
 
-    if mlflow_runs.empty:
-        # Live query unavailable / empty — fall back to cached artifact.
-        mlflow_runs = data_loader.load_mlflow_runs()
+    if hasattr(mlflow_result, "data"):
+        mlflow_runs = mlflow_result.data
+        runs_source = (
+            (getattr(mlflow_result, "extra", None) or {}).get("source")
+            or ("live_mlflow" if getattr(mlflow_result, "is_real", False) else "cached")
+        )
+    else:
+        mlflow_runs = mlflow_result
         runs_source = "cached"
 
     if mlflow_runs.empty:
         st.warning(_tr("No experiment run data available."))
         return
 
-    if runs_source == "live":
-        st.success(
-            f"Live MLflow query — {len(mlflow_runs)} runs from tracking "
-            "server."
-        )
+    if runs_source == "live_mlflow":
+        if _lang == "ko":
+            st.success(
+                f"Live MLflow 조회 — 추적 서버에서 현재 모델 실행 "
+                f"{len(mlflow_runs)}개를 불러왔습니다."
+            )
+        else:
+            st.success(
+                f"Live MLflow query — {len(mlflow_runs)} current model runs "
+                "from tracking server."
+            )
     else:
-        st.info(
-            f"Cached snapshot — N={len(mlflow_runs)} runs from "
-            "`results/model_performance_history.csv`. The tracking "
-            "server was not reachable, so this is not the live run list."
-        )
+        if _lang == "ko":
+            st.info(
+                f"캐시 스냅샷 — `results/model_performance_history.csv`에서 "
+                f"실행 {len(mlflow_runs)}개를 표시합니다. 추적 서버에 "
+                "연결할 수 없어 live 실행 목록이 아닙니다."
+            )
+        else:
+            st.info(
+                f"Cached snapshot — N={len(mlflow_runs)} runs from "
+                "`results/model_performance_history.csv`. The tracking "
+                "server was not reachable, so this is not the live run list."
+            )
 
     # KPI cards from runs
     kc1, kc2, kc3, kc4 = st.columns(4)
@@ -5864,7 +6094,7 @@ def render_mlflow_experiments(st_module, config: Dict, data_loader=None):
         total_runs,
         help=(
             "Source: live MLflow tracking server"
-            if runs_source == "live"
+            if runs_source == "live_mlflow"
             else "Source: cached `model_performance_history.csv` snapshot "
                  "— not the live run list."
         ),
@@ -5997,6 +6227,7 @@ def render_mlflow_experiments(st_module, config: Dict, data_loader=None):
                     mlflow_runs, x="params_lr", y="auc",
                     color="model_type",
                     size="params_epochs",
+                    render_mode="svg",
                     title=_tr("Learning Rate vs AUC"),
                     labels={
                         "params_lr": "Learning Rate",
@@ -6024,6 +6255,7 @@ def render_mlflow_experiments(st_module, config: Dict, data_loader=None):
                     mlflow_runs, x="params_epochs", y="auc",
                     color="model_type",
                     size="training_time_s",
+                    render_mode="svg",
                     title=_tr("Epochs vs AUC (size = training time)"),
                     labels={
                         "params_epochs": "Epochs",
@@ -6042,6 +6274,7 @@ def render_mlflow_experiments(st_module, config: Dict, data_loader=None):
         fig_eff = px.scatter(
             mlflow_runs, x="training_time_s", y="auc",
             color="model_type",
+            render_mode="svg",
             title=_tr("AUC vs Training Time"),
             labels={
                 "training_time_s": "Training Time (seconds)",
@@ -6111,12 +6344,22 @@ def render_mlflow_experiments(st_module, config: Dict, data_loader=None):
                 runs_timeline["timestamp"], min_points=5,
             )
             if not timeline_ok:
-                st.info(
-                    f"{timeline_msg} Experiment timeline requires at "
-                    "least 5 logged runs spanning ≥ 1 hour to render a "
-                    "non-degenerate temporal axis. Showing a static "
-                    "run-list table instead."
-                )
+                if _lang == "ko":
+                    observed_count = len(runs_timeline["timestamp"])
+                    st.info(
+                        f"이력이 부족합니다 — 최소 5개 관측값이 필요하지만 "
+                        f"현재 {observed_count}개입니다. 실험 타임라인을 "
+                        "왜곡 없이 표시하려면 1시간 이상에 걸친 실행 로그가 "
+                        "최소 5개 필요합니다. 대신 정적 실행 목록 테이블을 "
+                        "표시합니다."
+                    )
+                else:
+                    st.info(
+                        f"{timeline_msg} Experiment timeline requires at "
+                        "least 5 logged runs spanning ≥ 1 hour to render a "
+                        "non-degenerate temporal axis. Showing a static "
+                        "run-list table instead."
+                    )
                 _fallback_cols = [
                     c for c in [
                         "model_type", "auc", "precision", "recall",
@@ -6134,6 +6377,7 @@ def render_mlflow_experiments(st_module, config: Dict, data_loader=None):
                     runs_timeline, x="timestamp", y="auc",
                     color="model_type",
                     size="training_time_s",
+                    render_mode="svg",
                     title=_tr("Model Performance Over Time"),
                     labels={
                         "timestamp": "Run Date",
