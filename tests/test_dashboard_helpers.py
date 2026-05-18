@@ -219,10 +219,13 @@ class TestPageRouting:
     """Test page routing and navigation utilities."""
 
     def test_get_page_list(self):
-        """Must return complete list of 12 pages."""
+        """Must return the full set of dashboard pages."""
         from src.dashboard.utils.dashboard_helpers import get_page_list
         pages = get_page_list()
-        assert len(pages) == 16
+        # 시연(Demo) + Overview + 14 analytical pages + System Health = 17
+        assert len(pages) == 17
+        assert "Demo" in pages
+        assert pages[0] == "Demo"  # Demo must be the first page
         assert "Overview" in pages
         assert "MLflow Experiments" in pages
         assert "CLV & Retention Campaign" in pages
