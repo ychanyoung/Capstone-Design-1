@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 # =========================================================================
 
 PAGES = [
+    "Demo",
     "Overview",
     "Churn Analytics",
     "Model Performance",
@@ -48,6 +49,47 @@ PAGES = [
 # for now; toggle affects shell + navigation.
 
 I18N_KO = {
+    # --- Demo (시연) page -----------------------------------------------
+    "Demo": "시연",
+    "Demo: Coupon Recommendation Impact on CLV": "시연: 쿠폰 추천이 CLV에 미치는 영향",
+    "Move the budget slider to see how our coupon recommendations convert spend into customer lifetime value in real time.": "예산 슬라이더를 움직여 쿠폰 추천이 예산을 어떻게 고객 생애 가치로 전환하는지 실시간으로 확인하세요.",
+    "Move the budget slider to see how our coupon recommendations convert spend into customer lifetime value in real time. Numbers come from the same LP solution shown on the Budget Optimization page.": "예산 슬라이더를 움직여 쿠폰 추천이 예산을 어떻게 고객 생애 가치로 전환하는지 실시간으로 확인하세요. 수치는 예산 최적화 페이지와 동일한 LP 솔루션에서 가져옵니다.",
+    "No LP solution available yet. Run the pipeline first: `docker compose up pipeline`": "아직 LP 솔루션이 없습니다. 먼저 파이프라인을 실행하세요: `docker compose up pipeline`",
+    "LP artefact is present but contains no allocated budget. Rerun the pipeline with a non-zero budget.": "LP 산출물은 있지만 배정된 예산이 0입니다. 0이 아닌 예산으로 파이프라인을 다시 실행하세요.",
+    "Slider range: 0 to the 200 % LP what-if scenario. The headline Budget Optimization number lives at the 100 % anchor.": "슬라이더 범위: 0부터 LP 200% what-if 시나리오까지. 예산 최적화 페이지의 헤드라인 수치는 100% 앵커에 위치합니다.",
+    "Anchor point: at the LP's nominal budget ": "앵커: LP 기본 예산 ",
+    "the saved revenue equals ": "에서 절감된 매출은 ",
+    "— this is the headline figure on the Budget Optimization page.": " 입니다 — 이는 예산 최적화 페이지의 헤드라인 수치와 동일합니다.",
+    "LP @ 50%": "LP @ 50%",
+    "LP @ 100%": "LP @ 100%",
+    "LP @ 200%": "LP @ 200%",
+    "LP what-if anchors": "LP what-if 앵커",
+    "customers": "명",
+    "Budget → CLV / Net Gain (LP-grounded)": "예산 → CLV / 순이득 (LP 기반)",
+    "- **Baseline CLV** = Σ `clv × (1 − churn_prob)` across all customers in `budget_optimization.csv`.\n- **Selection rule** = ROI-per-won greedy on the LP solution. Customers the LP has chosen are ranked by `expected_revenue_saved_krw / allocated_budget` and treated in order until the budget is exhausted.\n- **At slider = LP nominal budget** the greedy selection trivially equals the full LP allocation, so the headline **CLV after recommendations** and **Net gain** match the Budget Optimization page exactly.\n- **Above the LP cap** the curve linearly interpolates between the 100 % and 200 % what-if scenarios from `budget_whatif.csv` — these are independent LP reruns shown as orange diamonds on the chart.\n- **Net gain** = Σ `expected_revenue_saved_krw` − Σ `allocated_budget` of treated customers.": "- **기준 CLV** = `budget_optimization.csv`의 모든 고객에 대한 Σ `clv × (1 − churn_prob)`.\n- **선택 규칙** = LP 솔루션에 대한 원당 ROI 그리디. LP가 선택한 고객을 `expected_revenue_saved_krw / allocated_budget`로 정렬해 예산이 소진될 때까지 처치.\n- **슬라이더 = LP 기본 예산**일 때 그리디 선택은 자명하게 전체 LP 배정과 같으므로, 헤드라인 **추천 후 CLV**와 **순이득**이 예산 최적화 페이지와 정확히 일치합니다.\n- **LP cap 초과 구간**에서는 `budget_whatif.csv`의 100% / 200% what-if 시나리오 사이를 선형 보간 — 이들은 독립적인 LP 재실행이며 차트의 주황색 다이아몬드로 표시됩니다.\n- **순이득** = 처치된 고객의 Σ `expected_revenue_saved_krw` − Σ `allocated_budget`.",
+    "Adjust budget": "예산 조정",
+    "Budget (KRW)": "예산 (원)",
+    "Baseline CLV (no coupon)": "기준 CLV (쿠폰 없음)",
+    "Uncouponed CLV (baseline)": "쿠폰 미적용 CLV",
+    "Uniform-Treatment CLV (avg coupon for all)": "전체 적용 CLV (모든 고객 평균 쿠폰)",
+    "Segment-level Budget Allocation": "세그먼트별 예산 배정",
+    "Customers": "고객 수",
+    "Run pipeline to compute": "파이프라인 실행 필요",
+    "CLV after recommendations": "추천 후 CLV",
+    "Net gain (ΔCLV − coupon cost)": "순이득 (ΔCLV − 쿠폰비용)",
+    "Customers treated": "처치 고객 수",
+    "spent": "지출",
+    "Baseline CLV": "기준 CLV",
+    "Current budget": "현재 예산",
+    "Budget → CLV / Net Gain": "예산 → CLV / 순이득",
+    "CLV after recommendations (KRW)": "추천 후 CLV (원)",
+    "Net gain (KRW)": "순이득 (원)",
+    "Net gain": "순이득",
+    "How is this computed?": "어떻게 계산되나요?",
+    "- **Baseline CLV** = Σ `clv × (1 − churn_probability)` across all customers.\n- **Coupon selection** = ROI-per-won greedy: customers with the highest `expected_revenue_saved / estimated_cost` are treated first until the budget is exhausted.\n- **CLV after recommendations** = Baseline + Σ `expected_revenue_saved` of treated customers.\n- **Net gain** = Σ `expected_revenue_saved` − Σ `estimated_cost` of treated customers.": "- **기준 CLV** = 전체 고객에 대한 Σ `clv × (1 − churn_probability)`.\n- **쿠폰 선택** = 원당 ROI 그리디 방식: `expected_revenue_saved / estimated_cost` 가 높은 고객 순으로 예산 한도까지 처치.\n- **추천 후 CLV** = 기준 CLV + 처치된 고객의 Σ `expected_revenue_saved`.\n- **순이득** = 처치된 고객의 Σ `expected_revenue_saved` − Σ `estimated_cost`.",
+    "No recommendations available yet. Run the pipeline first: `docker compose up pipeline`": "아직 추천 결과가 없습니다. 먼저 파이프라인을 실행하세요: `docker compose up pipeline`",
+    "Data loader unavailable.": "데이터 로더를 사용할 수 없습니다.",
+    "Failed to load recommendations:": "추천 데이터를 불러오지 못했습니다:",
     "(Authoritative health status comes from the Drift Detection Overview banner.)": "(권위 있는 헬스 상태는 Drift 탐지 개요 배너에서 가져옵니다.)",
     "1. Customer Lifetime Value Overview": "1. 고객 생애 가치 개요",
     "2. Uplift Modeling & Treatment Effectiveness": "2. 업리프트 모델링 및 처치 효과성",
@@ -756,6 +798,7 @@ def get_lang() -> str:
         return "en"
 
 PAGE_ICONS = {
+    "Demo": "\U0001f680",                  # rocket
     "Overview": "\U0001f4ca",              # bar chart
     "Churn Analytics": "\U0001f50d",       # magnifying glass
     "Model Performance": "\U0001f3af",     # target

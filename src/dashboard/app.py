@@ -41,6 +41,7 @@ from src.dashboard.calculations import (
 from src.dashboard.monitoring_view import (
     render_model_monitoring as render_monitoring_view,
 )
+from src.dashboard.demo_view import render_demo
 from src.dashboard.recommendations_view import render_recommendations_view
 from src.dashboard.system_health_view import render_system_health
 from src.dashboard.system_health_view import resolve_redis_connection_config
@@ -6272,6 +6273,7 @@ def main():
 
     # Route to page
     page_map = {
+        "Demo": render_demo,
         "Overview": render_overview,
         "Churn Analytics": render_churn_analytics,
         "Model Performance": render_model_performance,
