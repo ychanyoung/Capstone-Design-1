@@ -1,542 +1,375 @@
-# =============================================================================
-# Customer Behavior Simulator Configuration
-# =============================================================================
-# Defines customer personas, event types, simulation parameters, churn
-# definitions, and marketing treatment settings for the e-commerce churn
-# prediction and retention optimization system.
-# =============================================================================
-
-# ---------------------------------------------------------------------------
-# General simulation settings
-# ---------------------------------------------------------------------------
 simulation:
   random_seed: 42
-  num_customers: 20000            # Total customers (small mode: 5000)
-  simulation_months: 12           # Duration in months (small mode: 6)
-  simulation_days: 365            # Duration in days (derived from months)
-  start_date: "2024-01-01"
-  time_resolution: "daily"
+  num_customers: 20000
+  simulation_months: 12
+  simulation_days: 365
+  start_date: '2024-01-01'
+  time_resolution: daily
   small_mode:
     num_customers: 5000
     simulation_months: 6
     simulation_days: 180
-
-# ---------------------------------------------------------------------------
-# Churn definition (configurable thresholds)
-# ---------------------------------------------------------------------------
 churn_definition:
-  no_purchase_days: 30            # Days without purchase to flag churn
-  no_login_days: 60               # Days without login/visit to flag churn
-  operator: "OR"                  # OR = either condition triggers churn
-  # Future-window prediction split. Features are computed at the
-  # *observation cutoff* T = end_date - observation_window_days using only
-  # events with event_date <= T. The churn label is determined by activity
-  # in (T, end_date]. This temporal separation makes `recency` a
-  # legitimate predictor of *future* churn rather than a tautology with
-  # the label. Default = max(no_purchase_days, no_login_days) so the
-  # observation cutoff covers BOTH label-defining windows.
+  no_purchase_days: 30
+  no_login_days: 60
+  operator: OR
   observation_window_days: 60
-  # Rate-preserving label noise (deprecated safety net — left at 0
-  # because the future-window split is the structural fix; turn on
-  # only if a future change re-introduces label/feature alignment).
   label_noise_rate: 0.0
-
-# ---------------------------------------------------------------------------
-# Target churn rate range for the simulated population
-# ---------------------------------------------------------------------------
 target_churn_rate:
   min: 0.15
   max: 0.25
-
-# ---------------------------------------------------------------------------
-# Marketing treatment / control split
-# ---------------------------------------------------------------------------
 treatment:
-  treatment_ratio: 0.50           # 50% treatment, 50% control
-  min_group_size: 10000           # Minimum customers per group
-
-# ---------------------------------------------------------------------------
-# Train / test split (time-based)
-# ---------------------------------------------------------------------------
+  treatment_ratio: 0.5
+  min_group_size: 10000
 pipeline:
   train_months: 10
   test_months: 2
   ensemble_weight_ml: 0.6
   ensemble_weight_dl: 0.4
-
-# ---------------------------------------------------------------------------
-# ML model settings (XGBoost / LightGBM with CV and model selection)
-# ---------------------------------------------------------------------------
 ml_model:
-  n_folds: 5                        # Number of cross-validation folds
-  early_stopping_rounds: 20         # Early stopping patience
-
-# ---------------------------------------------------------------------------
-# Deep Learning model settings
-# ---------------------------------------------------------------------------
+  n_folds: 5
+  early_stopping_rounds: 20
 dl_model:
-  architecture: "transformer"     # "transformer" or "lstm"
-  sequence_window: 6              # Number of timesteps per sequence
-  hidden_size: 64                 # Transformer d_model / LSTM hidden dimension
-  num_layers: 2                   # Number of encoder layers
-  num_attention_heads: 4          # Number of multi-head attention heads
-  dim_feedforward: 128            # Transformer feed-forward hidden dimension
-  dropout: 0.2                    # Dropout rate
-  learning_rate: 0.001            # Adam learning rate
-  batch_size: 32                  # Training batch size
-  epochs: 10                      # Training epochs
+  architecture: transformer
+  sequence_window: 6
+  hidden_size: 64
+  num_layers: 2
+  num_attention_heads: 4
+  dim_feedforward: 128
+  dropout: 0.2
+  learning_rate: 0.001
+  batch_size: 32
+  epochs: 10
   early_stopping:
-    enabled: true                   # Enable early stopping
-    patience: 5                     # Epochs to wait for improvement
-    min_delta: 0.001                # Minimum improvement threshold
-    monitor: "val_loss"             # Metric to monitor
-    restore_best_weights: true      # Restore best model weights
-
-# ---------------------------------------------------------------------------
-# MLflow tracking settings
-# ---------------------------------------------------------------------------
+    enabled: true
+    patience: 5
+    min_delta: 0.001
+    monitor: val_loss
+    restore_best_weights: true
 mlflow:
-  tracking_uri: "sqlite:///mlflow/mlflow.db"
-  artifact_location: "mlflow/artifacts"
-  experiment_name: "churn_prediction"
+  tracking_uri: sqlite:///mlflow/mlflow.db
+  artifact_location: mlflow/artifacts
+  experiment_name: churn_prediction
   log_models: true
   log_artifacts: true
-  # Docker-specific settings (used when running inside containers)
   docker:
-    tracking_uri: "http://mlflow:5000"
-    artifact_location: "/mlflow/artifacts"
-    server_host: "0.0.0.0"
+    tracking_uri: http://mlflow:5000
+    artifact_location: /mlflow/artifacts
+    server_host: 0.0.0.0
     server_port: 5000
-    backend_store_uri: "sqlite:////mlflow/mlflow.db"
-
-# ---------------------------------------------------------------------------
-# Redis settings (streaming and caching)
-# ---------------------------------------------------------------------------
+    backend_store_uri: sqlite:////mlflow/mlflow.db
 redis:
-  host: "localhost"
+  host: localhost
   port: 6379
   db: 0
-  stream_name: "scoring_requests"
+  stream_name: scoring_requests
   stream_maxlen: 10000
-  response_stream: "scoring_responses"
+  response_stream: scoring_responses
   cache_ttl_seconds: 3600
-  consumer_group: "scoring_consumers"
-  consumer_name: "consumer-1"
+  consumer_group: scoring_consumers
+  consumer_name: consumer-1
   consumer_batch_size: 10
   consumer_block_ms: 1000
-  # Docker-specific settings (env vars REDIS_HOST/REDIS_PORT override above)
   docker:
-    host: "redis"
+    host: redis
     port: 6379
-
-# ---------------------------------------------------------------------------
-# Survival Analysis settings (Cox PH via lifelines)
-# ---------------------------------------------------------------------------
 survival:
-  penalizer: 0.01                   # L2 penalizer for Cox PH model
-  l1_ratio: 0.0                     # Elastic net mixing (0=L2 only, 1=L1 only)
-  alpha: 0.05                       # Significance level for confidence intervals
-
-# ---------------------------------------------------------------------------
-# Budget settings (KRW)
-# ---------------------------------------------------------------------------
+  penalizer: 0.01
+  l1_ratio: 0.0
+  alpha: 0.05
 budget:
-  total_krw: 50000000             # 50,000,000 KRW default
-  currency: "KRW"
-
-# ---------------------------------------------------------------------------
-# Budget Optimization settings (LP solver + cost structure)
-# ---------------------------------------------------------------------------
+  total_krw: 50000000
+  currency: KRW
 optimization:
-  total_budget: 50000000            # Total budget constraint (KRW)
-  currency: "KRW"
-  discount_rate: 0.10               # Annual discount rate for NPV (10%)
-  time_horizon_months: 12           # Forward-looking value horizon
-
-  # Per-channel cost configuration
+  total_budget: 50000000
+  currency: KRW
+  discount_rate: 0.1
+  time_horizon_months: 12
   channels:
     email:
-      cost_per_action: 1000         # KRW per email campaign
-      expected_roi_multiplier: 1.0  # Neutral ROI multiplier
-      min_budget: 0                 # No minimum spend requirement
-      max_budget: null              # No cap
+      cost_per_action: 1000
+      expected_roi_multiplier: 1.0
+      min_budget: 0
+      max_budget: null
     sms:
-      cost_per_action: 500          # KRW per SMS
-      expected_roi_multiplier: 0.8  # Slightly lower effectiveness
+      cost_per_action: 500
+      expected_roi_multiplier: 0.8
       min_budget: 0
       max_budget: null
     push_notification:
-      cost_per_action: 200          # KRW per push notification
-      expected_roi_multiplier: 0.6  # Lower engagement channel
+      cost_per_action: 200
+      expected_roi_multiplier: 0.6
       min_budget: 0
       max_budget: null
     coupon:
-      cost_per_action: 5000         # KRW per coupon (face value + ops)
-      expected_roi_multiplier: 1.5  # High conversion lift
+      cost_per_action: 5000
+      expected_roi_multiplier: 1.5
       min_budget: 0
-      max_budget: 20000000          # Cap coupon spend at 20M
+      max_budget: 20000000
     call_center:
-      cost_per_action: 15000        # KRW per outbound call
-      expected_roi_multiplier: 2.0  # Highest effectiveness for at-risk
+      cost_per_action: 15000
+      expected_roi_multiplier: 2.0
       min_budget: 0
-      max_budget: 10000000          # Cap call center at 10M
-
-# ---------------------------------------------------------------------------
-# Drift detection (PSI) settings
-# ---------------------------------------------------------------------------
+      max_budget: 10000000
 drift_detection:
-  n_bins: 10                        # Number of histogram bins
-  binning_strategy: "quantile"      # "quantile" or "equal_width"
-  yellow_threshold: 0.10            # Moderate drift alert threshold
-  red_threshold: 0.25               # Significant drift alert threshold
-  epsilon: 0.000001                 # Smoothing constant for zero bins
-
-# ---------------------------------------------------------------------------
-# KS / Chi-Square drift detection settings
-# ---------------------------------------------------------------------------
+  n_bins: 10
+  binning_strategy: quantile
+  yellow_threshold: 0.1
+  red_threshold: 0.25
+  epsilon: 1.0e-06
 ks_drift_detection:
-  warning_threshold: 0.05            # P-value threshold for warning level
-  drift_threshold: 0.01              # P-value threshold for drift level
-
-# ---------------------------------------------------------------------------
-# Model Monitoring Service settings
-# ---------------------------------------------------------------------------
+  warning_threshold: 0.05
+  drift_threshold: 0.01
 monitoring:
-  enabled: true                        # Enable monitoring service
-  check_interval_seconds: 3600         # Interval between drift checks (seconds)
-  alert_on_yellow: false               # Trigger alerts for moderate (yellow) drift
-  alert_on_red: true                   # Trigger alerts for significant (red) drift
-  log_to_mlflow: true                  # Log drift metrics and tags to MLflow
-
-# ---------------------------------------------------------------------------
-# Event types generated per customer (minimum 8 required)
-# ---------------------------------------------------------------------------
+  enabled: true
+  check_interval_seconds: 3600
+  alert_on_yellow: false
+  alert_on_red: true
+  log_to_mlflow: true
 event_types:
-  - page_view
-  - search
-  - add_to_cart
-  - remove_from_cart
-  - purchase
-  - coupon_use
-  - review
-  - cs_contact
-
-# ---------------------------------------------------------------------------
-# Customer Personas (6 personas)
-# ---------------------------------------------------------------------------
-# Each persona defines distinct behavioral parameters:
-#
-#   proportion                    - Share of total customers (must sum to 1.0)
-#   purchase_frequency_monthly    - Average purchases per month
-#   avg_order_value               - Average order value in KRW
-#   churn_probability             - Base monthly churn probability
-#   engagement:
-#     daily_visit_prob            - Prob of visiting the site on any given day
-#     search_per_visit            - Avg searches per visit session
-#     cart_add_per_visit          - Avg items added to cart per visit
-#     cart_to_purchase_rate       - Conversion rate from cart to purchase
-#     coupon_usage_rate           - Prob of redeeming an available coupon
-#     review_rate                 - Prob of writing a review after purchase
-#     cs_contact_monthly          - Avg CS contacts per month
-#     avg_session_minutes         - Avg session duration (minutes)
-#     weekend_activity_boost      - Multiplier for weekend vs weekday activity
-#   behavior_decay:               - Models gradual disengagement over time
-#     visit_decay_rate            - Monthly decay in visit probability
-#     purchase_cycle_increase     - Monthly increase in days between purchases
-#     session_time_decay          - Monthly proportional decrease in session time
-#   marketing_response:           - How customer reacts to marketing interventions
-#     coupon_conversion_lift      - Purchase probability lift from coupon
-#     push_notification_lift      - Visit probability lift from push notification
-#     adverse_effect_prob         - Prob of negative reaction (unsubscribe/churn)
-# ---------------------------------------------------------------------------
-
+- page_view
+- search
+- add_to_cart
+- remove_from_cart
+- purchase
+- coupon_use
+- review
+- cs_contact
 personas:
-  # =========================================================================
-  # Persona 1: VIP Loyal (VIP충성고객)
-  # =========================================================================
-  # Top-tier customers with highest spend and deepest engagement.
-  # Very unlikely to churn; minimal decay; marketing has slight positive effect.
-  - name: "vip_loyal"
-    name_kr: "VIP충성고객"
-    description: "High-spending power users with strong brand loyalty and consistent engagement"
-    proportion: 0.10
-    purchase_frequency_monthly: 8.0
-    avg_order_value: 150000
-    churn_probability: 0.02
-    engagement:
-      daily_visit_prob: 0.85
-      search_per_visit: 3.5
-      cart_add_per_visit: 2.0
-      cart_to_purchase_rate: 0.75
-      coupon_usage_rate: 0.40
-      review_rate: 0.30
-      cs_contact_monthly: 0.3
-      avg_session_minutes: 25.0
-      weekend_activity_boost: 1.1
-    behavior_decay:
-      visit_decay_rate: 0.005
-      purchase_cycle_increase: 0.1
-      session_time_decay: 0.005
-    marketing_response:
-      coupon_conversion_lift: 0.05
-      push_notification_lift: 0.03
-      adverse_effect_prob: 0.01
-
-  # =========================================================================
-  # Persona 2: Regular Loyal (일반충성고객)
-  # =========================================================================
-  # Steady mid-tier customers who buy regularly at moderate values.
-  # Low churn risk; respond well to coupons and push notifications.
-  - name: "regular_loyal"
-    name_kr: "일반충성고객"
-    description: "Dependable repeat buyers with moderate spend and steady habits"
-    proportion: 0.25
-    purchase_frequency_monthly: 4.0
-    avg_order_value: 80000
-    churn_probability: 0.05
-    engagement:
-      daily_visit_prob: 0.55
-      search_per_visit: 2.5
-      cart_add_per_visit: 1.5
-      cart_to_purchase_rate: 0.60
-      coupon_usage_rate: 0.50
-      review_rate: 0.15
-      cs_contact_monthly: 0.5
-      avg_session_minutes: 15.0
-      weekend_activity_boost: 1.2
-    behavior_decay:
-      visit_decay_rate: 0.01
-      purchase_cycle_increase: 0.3
-      session_time_decay: 0.01
-    marketing_response:
-      coupon_conversion_lift: 0.10
-      push_notification_lift: 0.08
-      adverse_effect_prob: 0.02
-
-  # =========================================================================
-  # Persona 3: Bargain Hunter / Price Sensitive (가격민감형)
-  # =========================================================================
-  # Deal-driven shoppers who browse heavily but only convert on promotions.
-  # High coupon usage; moderate churn; strong positive marketing response.
-  - name: "bargain_hunter"
-    name_kr: "가격민감형"
-    description: "Price-sensitive deal seekers who convert mainly through promotions"
-    proportion: 0.20
-    purchase_frequency_monthly: 3.0
-    avg_order_value: 45000
-    churn_probability: 0.09
-    engagement:
-      daily_visit_prob: 0.45
-      search_per_visit: 4.0
-      cart_add_per_visit: 2.5
-      cart_to_purchase_rate: 0.40
-      coupon_usage_rate: 0.85
-      review_rate: 0.08
-      cs_contact_monthly: 0.8
-      avg_session_minutes: 20.0
-      weekend_activity_boost: 1.4
-    behavior_decay:
-      visit_decay_rate: 0.03
-      purchase_cycle_increase: 0.8
-      session_time_decay: 0.02
-    marketing_response:
-      coupon_conversion_lift: 0.25
-      push_notification_lift: 0.12
-      adverse_effect_prob: 0.03
-
-  # =========================================================================
-  # Persona 4: Explorer (탐색형)
-  # =========================================================================
-  # Exploration-phase customers who browse extensively but purchase infrequently.
-  # High page views, low conversion rate; responsive to personalized curation.
-  - name: "explorer"
-    name_kr: "탐색형"
-    description: "Exploration-phase customers with high browsing but low purchase frequency"
-    proportion: 0.15
-    purchase_frequency_monthly: 1.5
-    avg_order_value: 55000
-    churn_probability: 0.12
-    engagement:
-      daily_visit_prob: 0.40
-      search_per_visit: 3.0
-      cart_add_per_visit: 1.8
-      cart_to_purchase_rate: 0.40
-      coupon_usage_rate: 0.60
-      review_rate: 0.05
-      cs_contact_monthly: 1.0
-      avg_session_minutes: 12.0
-      weekend_activity_boost: 1.3
-    behavior_decay:
-      visit_decay_rate: 0.04
-      purchase_cycle_increase: 1.0
-      session_time_decay: 0.03
-    marketing_response:
-      coupon_conversion_lift: 0.20
-      push_notification_lift: 0.15
-      adverse_effect_prob: 0.05
-
-  # =========================================================================
-  # Persona 5: Dormant / Churning (이탈진행형)
-  # =========================================================================
-  # Previously active customers now showing strong disengagement signals.
-  # High churn probability; rapid behavioral decay; marketing may backfire.
-  - name: "dormant"
-    name_kr: "이탈진행형"
-    description: "Disengaging customers with declining activity heading toward churn"
-    proportion: 0.15
-    purchase_frequency_monthly: 0.5
-    avg_order_value: 60000
-    churn_probability: 0.30
-    engagement:
-      daily_visit_prob: 0.10
-      search_per_visit: 1.0
-      cart_add_per_visit: 0.5
-      cart_to_purchase_rate: 0.20
-      coupon_usage_rate: 0.30
-      review_rate: 0.02
-      cs_contact_monthly: 0.2
-      avg_session_minutes: 5.0
-      weekend_activity_boost: 1.0
-    behavior_decay:
-      visit_decay_rate: 0.08
-      purchase_cycle_increase: 2.0
-      session_time_decay: 0.06
-    marketing_response:
-      coupon_conversion_lift: 0.08
-      push_notification_lift: 0.04
-      adverse_effect_prob: 0.10
-
-  # =========================================================================
-  # Persona 6: New Customer (신규가입자)
-  # =========================================================================
-  # Recently joined customers still forming habits. Moderate churn risk;
-  # responsive to onboarding sequences and welcome offers.
-  - name: "new_customer"
-    name_kr: "신규가입자"
-    description: "Recently joined customers in the onboarding phase with limited purchase history"
-    proportion: 0.15
-    purchase_frequency_monthly: 3.5
-    avg_order_value: 120000
-    churn_probability: 0.15
-    engagement:
-      daily_visit_prob: 0.35
-      search_per_visit: 2.0
-      cart_add_per_visit: 1.2
-      cart_to_purchase_rate: 0.50
-      coupon_usage_rate: 0.45
-      review_rate: 0.10
-      cs_contact_monthly: 1.5
-      avg_session_minutes: 10.0
-      weekend_activity_boost: 1.2
-    behavior_decay:
-      visit_decay_rate: 0.06
-      purchase_cycle_increase: 1.5
-      session_time_decay: 0.05
-    marketing_response:
-      coupon_conversion_lift: 0.15
-      push_notification_lift: 0.10
-      adverse_effect_prob: 0.04
-
-# ---------------------------------------------------------------------------
-# Customer Segmentation (configurable thresholds)
-# ---------------------------------------------------------------------------
-# RFM-based segmentation with 6+ segments.
-# Each segment defines inclusion criteria on normalized RFM scores (0-5)
-# and optional churn probability / behavioral thresholds.
-# ---------------------------------------------------------------------------
+- name: vip_loyal
+  name_kr: VIP충성고객
+  description: High-spending power users with strong brand loyalty and consistent
+    engagement
+  proportion: 0.1
+  purchase_frequency_monthly: 8.0
+  avg_order_value: 150000
+  churn_probability: 0.02
+  engagement:
+    daily_visit_prob: 0.85
+    search_per_visit: 3.5
+    cart_add_per_visit: 2.0
+    cart_to_purchase_rate: 0.75
+    coupon_usage_rate: 0.4
+    review_rate: 0.3
+    cs_contact_monthly: 0.3
+    avg_session_minutes: 25.0
+    weekend_activity_boost: 1.1
+  behavior_decay:
+    visit_decay_rate: 0.005
+    purchase_cycle_increase: 0.1
+    session_time_decay: 0.005
+  marketing_response:
+    coupon_conversion_lift: 0.05
+    push_notification_lift: 0.03
+    adverse_effect_prob: 0.01
+- name: regular_loyal
+  name_kr: 일반충성고객
+  description: Dependable repeat buyers with moderate spend and steady habits
+  proportion: 0.25
+  purchase_frequency_monthly: 4.0
+  avg_order_value: 80000
+  churn_probability: 0.05
+  engagement:
+    daily_visit_prob: 0.55
+    search_per_visit: 2.5
+    cart_add_per_visit: 1.5
+    cart_to_purchase_rate: 0.6
+    coupon_usage_rate: 0.5
+    review_rate: 0.15
+    cs_contact_monthly: 0.5
+    avg_session_minutes: 15.0
+    weekend_activity_boost: 1.2
+  behavior_decay:
+    visit_decay_rate: 0.01
+    purchase_cycle_increase: 0.3
+    session_time_decay: 0.01
+  marketing_response:
+    coupon_conversion_lift: 0.1
+    push_notification_lift: 0.08
+    adverse_effect_prob: 0.02
+- name: bargain_hunter
+  name_kr: 가격민감형
+  description: Price-sensitive deal seekers who convert mainly through promotions
+  proportion: 0.2
+  purchase_frequency_monthly: 3.0
+  avg_order_value: 45000
+  churn_probability: 0.09
+  engagement:
+    daily_visit_prob: 0.45
+    search_per_visit: 4.0
+    cart_add_per_visit: 2.5
+    cart_to_purchase_rate: 0.4
+    coupon_usage_rate: 0.85
+    review_rate: 0.08
+    cs_contact_monthly: 0.8
+    avg_session_minutes: 20.0
+    weekend_activity_boost: 1.4
+  behavior_decay:
+    visit_decay_rate: 0.03
+    purchase_cycle_increase: 0.8
+    session_time_decay: 0.02
+  marketing_response:
+    coupon_conversion_lift: 0.25
+    push_notification_lift: 0.12
+    adverse_effect_prob: 0.03
+- name: explorer
+  name_kr: 탐색형
+  description: Exploration-phase customers with high browsing but low purchase frequency
+  proportion: 0.15
+  purchase_frequency_monthly: 1.5
+  avg_order_value: 55000
+  churn_probability: 0.12
+  engagement:
+    daily_visit_prob: 0.4
+    search_per_visit: 3.0
+    cart_add_per_visit: 1.8
+    cart_to_purchase_rate: 0.4
+    coupon_usage_rate: 0.6
+    review_rate: 0.05
+    cs_contact_monthly: 1.0
+    avg_session_minutes: 12.0
+    weekend_activity_boost: 1.3
+  behavior_decay:
+    visit_decay_rate: 0.04
+    purchase_cycle_increase: 1.0
+    session_time_decay: 0.03
+  marketing_response:
+    coupon_conversion_lift: 0.2
+    push_notification_lift: 0.15
+    adverse_effect_prob: 0.05
+- name: dormant
+  name_kr: 이탈진행형
+  description: Disengaging customers with declining activity heading toward churn
+  proportion: 0.15
+  purchase_frequency_monthly: 0.5
+  avg_order_value: 60000
+  churn_probability: 0.3
+  engagement:
+    daily_visit_prob: 0.1
+    search_per_visit: 1.0
+    cart_add_per_visit: 0.5
+    cart_to_purchase_rate: 0.2
+    coupon_usage_rate: 0.3
+    review_rate: 0.02
+    cs_contact_monthly: 0.2
+    avg_session_minutes: 5.0
+    weekend_activity_boost: 1.0
+  behavior_decay:
+    visit_decay_rate: 0.08
+    purchase_cycle_increase: 2.0
+    session_time_decay: 0.06
+  marketing_response:
+    coupon_conversion_lift: 0.08
+    push_notification_lift: 0.04
+    adverse_effect_prob: 0.1
+- name: new_customer
+  name_kr: 신규가입자
+  description: Recently joined customers in the onboarding phase with limited purchase
+    history
+  proportion: 0.15
+  purchase_frequency_monthly: 3.5
+  avg_order_value: 120000
+  churn_probability: 0.15
+  engagement:
+    daily_visit_prob: 0.35
+    search_per_visit: 2.0
+    cart_add_per_visit: 1.2
+    cart_to_purchase_rate: 0.5
+    coupon_usage_rate: 0.45
+    review_rate: 0.1
+    cs_contact_monthly: 1.5
+    avg_session_minutes: 10.0
+    weekend_activity_boost: 1.2
+  behavior_decay:
+    visit_decay_rate: 0.06
+    purchase_cycle_increase: 1.5
+    session_time_decay: 0.05
+  marketing_response:
+    coupon_conversion_lift: 0.15
+    push_notification_lift: 0.1
+    adverse_effect_prob: 0.04
 segmentation:
-  method: "rfm_behavioral"           # "rfm_behavioral" or "kmeans"
-  n_rfm_bins: 5                       # Number of quantile bins for R/F/M scoring
-  kmeans_clusters: 6                  # Number of clusters for kmeans method
-
-  # Segment definitions with configurable thresholds
-  # Each segment: name, criteria on recency_score, frequency_score,
-  # monetary_score (1=worst, 5=best), plus optional behavioral criteria.
+  method: rfm_behavioral
+  n_rfm_bins: 5
+  kmeans_clusters: 6
   segments:
-    - name: "vip_loyal"
-      name_kr: "VIP충성고객"
-      description: "Top-tier customers with highest RFM scores and low churn risk"
-      color: "#2ecc71"
-      priority: 1
-      criteria:
-        recency_score_min: 4
-        frequency_score_min: 4
-        monetary_score_min: 4
-      retention_action: "exclusive_rewards"
-
-    - name: "loyal_customer"
-      name_kr: "충성고객"
-      description: "Consistent buyers with strong frequency and moderate-to-high spend"
-      color: "#27ae60"
-      priority: 2
-      criteria:
-        recency_score_min: 3
-        frequency_score_min: 4
-        monetary_score_min: 2
-      retention_action: "loyalty_program"
-
-    - name: "potential_loyalist"
-      name_kr: "잠재충성고객"
-      description: "Recent customers with growing engagement and moderate spend"
-      color: "#3498db"
-      priority: 3
-      criteria:
-        recency_score_min: 4
-        frequency_score_min: 2
-        monetary_score_min: 2
-      retention_action: "engagement_campaign"
-
-    - name: "at_risk"
-      name_kr: "이탈위험고객"
-      description: "Previously active customers showing declining engagement"
-      color: "#e67e22"
-      priority: 4
-      criteria:
-        recency_score_max: 2
-        frequency_score_min: 3
-        monetary_score_min: 2
-      retention_action: "win_back_campaign"
-
-    - name: "hibernating"
-      name_kr: "휴면고객"
-      description: "Low recency, low frequency customers needing reactivation"
-      color: "#e74c3c"
-      priority: 5
-      criteria:
-        recency_score_max: 2
-        frequency_score_max: 2
-        monetary_score_min: 1
-      retention_action: "reactivation_offer"
-
-    - name: "explorer"
-      name_kr: "탐색형"
-      description: "High browsing but low purchase frequency customers"
-      color: "#9b59b6"
-      priority: 6
-      criteria:
-        recency_score_min: 4
-        frequency_score_max: 1
-        monetary_score_max: 2
-      retention_action: "personalized_curation"
-
-    - name: "new_customer"
-      name_kr: "신규가입자"
-      description: "Recently joined customers in onboarding phase"
-      color: "#c0392b"
-      priority: 7
-      criteria:
-        recency_score_max: 3
-        frequency_score_min: 2
-        monetary_score_min: 4
-      retention_action: "premium_win_back"
-
-    - name: "bargain_hunter"
-      name_kr: "가격민감형"
-      description: "Frequent low-value buyers driven by promotions"
-      color: "#f39c12"
-      priority: 8
-      criteria:
-        recency_score_min: 2
-        frequency_score_min: 3
-        monetary_score_max: 2
-      retention_action: "targeted_promotion"
+  - name: vip_loyal
+    name_kr: VIP충성고객
+    description: Top-tier customers with highest RFM scores and low churn risk
+    color: '#2ecc71'
+    priority: 1
+    criteria:
+      recency_score_min: 4
+      frequency_score_min: 4
+      monetary_score_min: 4
+    retention_action: exclusive_rewards
+  - name: loyal_customer
+    name_kr: 충성고객
+    description: Consistent buyers with strong frequency and moderate-to-high spend
+    color: '#27ae60'
+    priority: 2
+    criteria:
+      recency_score_min: 3
+      frequency_score_min: 4
+      monetary_score_min: 2
+    retention_action: loyalty_program
+  - name: potential_loyalist
+    name_kr: 잠재충성고객
+    description: Recent customers with growing engagement and moderate spend
+    color: '#3498db'
+    priority: 3
+    criteria:
+      recency_score_min: 4
+      frequency_score_min: 2
+      monetary_score_min: 2
+    retention_action: engagement_campaign
+  - name: at_risk
+    name_kr: 이탈위험고객
+    description: Previously active customers showing declining engagement
+    color: '#e67e22'
+    priority: 4
+    criteria:
+      recency_score_max: 2
+      frequency_score_min: 3
+      monetary_score_min: 2
+    retention_action: win_back_campaign
+  - name: hibernating
+    name_kr: 휴면고객
+    description: Low recency, low frequency customers needing reactivation
+    color: '#e74c3c'
+    priority: 5
+    criteria:
+      recency_score_max: 2
+      frequency_score_max: 2
+      monetary_score_min: 1
+    retention_action: reactivation_offer
+  - name: explorer
+    name_kr: 탐색형
+    description: High browsing but low purchase frequency customers
+    color: '#9b59b6'
+    priority: 6
+    criteria:
+      recency_score_min: 4
+      frequency_score_max: 1
+      monetary_score_max: 2
+    retention_action: personalized_curation
+  - name: new_customer
+    name_kr: 신규가입자
+    description: Recently joined customers in onboarding phase
+    color: '#c0392b'
+    priority: 7
+    criteria:
+      recency_score_max: 3
+      frequency_score_min: 2
+      monetary_score_min: 4
+    retention_action: premium_win_back
+  - name: bargain_hunter
+    name_kr: 가격민감형
+    description: Frequent low-value buyers driven by promotions
+    color: '#f39c12'
+    priority: 8
+    criteria:
+      recency_score_min: 2
+      frequency_score_min: 3
+      monetary_score_max: 2
+    retention_action: targeted_promotion

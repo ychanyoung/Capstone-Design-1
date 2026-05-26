@@ -27,12 +27,16 @@ and `budget_optimization.csv` `cost_per_action` column (cost side).
 from __future__ import annotations
 
 import logging
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import yaml
 
 from src.dashboard.utils.dashboard_helpers import (
     format_currency_krw,
@@ -367,23 +371,44 @@ def _format_full_krw(x: Any) -> str:
 def _scenario_card_html(
     title: str, icon: str, color: str, rows: list[tuple[str, str]],
     highlight: bool = False,
+    hero_label: str | None = None,
 ) -> str:
     """Build a uniform-styled scenario card via inline HTML.
+
+    Args:
+        hero_label: When a row's label matches this string it is rendered
+            as a large, visually prominent "hero" row instead of a normal
+            key-value line.
 
     Returns a markdown string suitable for ``st.markdown(unsafe_allow_html=True)``.
     """
     border = f"3px solid {color}" if highlight else "1px solid rgba(120,120,120,0.25)"
     shadow = "0 4px 18px rgba(0,0,0,0.10)" if highlight else "0 1px 3px rgba(0,0,0,0.04)"
     bg = f"{color}10" if highlight else "rgba(255,255,255,0.03)"
-    rows_html = "".join(
-        f"<div style='display:flex;justify-content:space-between;"
-        f"padding:6px 0;border-bottom:1px dashed rgba(120,120,120,0.18);"
-        f"font-size:14px;'>"
-        f"<span style='opacity:0.75'>{label}</span>"
-        f"<span style='font-weight:600'>{value}</span>"
-        f"</div>"
-        for label, value in rows
-    )
+    parts: list[str] = []
+    for label, value in rows:
+        if hero_label and label == hero_label:
+            parts.append(
+                f"<div style='background:{color}18;border-radius:10px;"
+                f"padding:12px 14px;margin:10px 0;"
+                f"border-left:4px solid {color};'>"
+                f"<div style='font-size:12px;opacity:0.7;"
+                f"text-transform:uppercase;letter-spacing:0.05em;'>"
+                f"{label}</div>"
+                f"<div style='font-size:28px;font-weight:800;"
+                f"color:{color};line-height:1.2;'>{value}</div>"
+                f"</div>"
+            )
+        else:
+            parts.append(
+                f"<div style='display:flex;justify-content:space-between;"
+                f"padding:6px 0;border-bottom:1px dashed rgba(120,120,120,0.18);"
+                f"font-size:14px;'>"
+                f"<span style='opacity:0.75'>{label}</span>"
+                f"<span style='font-weight:600'>{value}</span>"
+                f"</div>"
+            )
+    rows_html = "".join(parts)
     return (
         f"<div style='border:{border};border-radius:14px;padding:18px 22px;"
         f"background:{bg};box-shadow:{shadow};height:100%;'>"
@@ -397,6 +422,167 @@ def _scenario_card_html(
 # ---------------------------------------------------------------------------
 # render_demo
 # ---------------------------------------------------------------------------
+
+def _update_config_churn_definition(
+    no_purchase_days: int, no_login_days: int, operator: str,
+) -> None:
+    """Overwrite the churn_definition section in simulator_config.yaml."""
+    config_path = PROJECT_ROOT / "config" / "simulator_config.yaml"
+    with open(config_path, "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+    churn_def = cfg.setdefault("churn_definition", {})
+    churn_def["no_purchase_days"] = no_purchase_days
+    churn_def["no_login_days"] = no_login_days
+    churn_def["operator"] = operator
+    obs_window = max(no_purchase_days, no_login_days)
+    churn_def["observation_window_days"] = obs_window
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+
+def _run_pipeline_subprocess() -> subprocess.CompletedProcess:
+    """Run the full pipeline via subprocess and return the result.
+
+    Uses the same Python interpreter that is running the dashboard.
+    In Docker the dashboard image now includes the full pipeline
+    dependencies (requirements.txt) so sklearn / xgboost / torch are
+    available.  Locally the venv already has everything installed.
+    """
+    cmd = [
+        sys.executable, "-m", "src.main",
+        "--mode", "all",
+        "--config", str(PROJECT_ROOT / "config" / "simulator_config.yaml"),
+    ]
+    env = {**os.environ, "PYTHONPATH": str(PROJECT_ROOT)}
+    return subprocess.run(
+        cmd,
+        cwd=str(PROJECT_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _render_pipeline_runner(st_module, config: Dict[str, Any], lang: str) -> None:
+    """Render the pipeline execution UI with churn definition controls."""
+    st = st_module
+    _tr = lambda s: tr(s, lang)
+
+    st.markdown("---")
+    st.markdown("### ⚙️ " + _tr("Pipeline Execution"))
+    st.caption(
+        _tr(
+            "Configure churn definition parameters and run the full "
+            "end-to-end pipeline. After completion, refresh the page "
+            "to see updated results."
+        )
+    )
+
+    churn_def = config.get("churn_definition", {})
+    current_no_purchase = churn_def.get("no_purchase_days", 30)
+    current_no_login = churn_def.get("no_login_days", 60)
+    current_operator = churn_def.get("operator", "OR")
+
+    col_cfg1, col_cfg2, col_cfg3 = st.columns(3)
+    with col_cfg1:
+        no_purchase_days = st.number_input(
+            _tr("No-purchase days"),
+            min_value=7,
+            max_value=180,
+            value=current_no_purchase,
+            step=1,
+            key="pipeline_no_purchase_days",
+            help=_tr("Days without purchase to flag churn"),
+        )
+    with col_cfg2:
+        no_login_days = st.number_input(
+            _tr("No-login days"),
+            min_value=7,
+            max_value=180,
+            value=current_no_login,
+            step=1,
+            key="pipeline_no_login_days",
+            help=_tr("Days without login/visit to flag churn"),
+        )
+    with col_cfg3:
+        operator_options = ["OR", "AND"]
+        operator = st.selectbox(
+            _tr("Operator"),
+            options=operator_options,
+            index=operator_options.index(current_operator)
+            if current_operator in operator_options
+            else 0,
+            key="pipeline_operator",
+            help=_tr(
+                "OR = either condition triggers churn. "
+                "AND = both conditions must be met."
+            ),
+        )
+
+    obs_window = max(no_purchase_days, no_login_days)
+    st.info(
+        _tr("Observation window") + f": **{obs_window}** " + _tr("days")
+        + " — " + _tr("automatically set to max(no_purchase_days, no_login_days)")
+    )
+
+    config_changed = (
+        no_purchase_days != current_no_purchase
+        or no_login_days != current_no_login
+        or operator != current_operator
+    )
+    if config_changed:
+        st.warning(
+            _tr("Churn definition has been modified. "
+                 "Click the button below to apply and run the pipeline.")
+        )
+
+    if "pipeline_running" not in st.session_state:
+        st.session_state["pipeline_running"] = False
+    if "pipeline_result" not in st.session_state:
+        st.session_state["pipeline_result"] = None
+
+    run_button = st.button(
+        f"🚀 {_tr('Run Full Pipeline')}",
+        key="run_pipeline_btn",
+        disabled=st.session_state["pipeline_running"],
+        type="primary",
+        use_container_width=True,
+    )
+
+    if run_button and not st.session_state["pipeline_running"]:
+        st.session_state["pipeline_running"] = True
+        st.session_state["pipeline_result"] = None
+
+        _update_config_churn_definition(no_purchase_days, no_login_days, operator)
+
+        with st.spinner(_tr("Running full pipeline... This may take several minutes.")):
+            try:
+                result = _run_pipeline_subprocess()
+                if result.returncode == 0:
+                    st.session_state["pipeline_result"] = "success"
+                    st.cache_data.clear()
+                else:
+                    st.session_state["pipeline_result"] = "error"
+                    st.session_state["pipeline_error"] = result.stderr or result.stdout
+            except Exception as e:
+                st.session_state["pipeline_result"] = "error"
+                st.session_state["pipeline_error"] = str(e)
+            finally:
+                st.session_state["pipeline_running"] = False
+
+        st.rerun()
+
+    if st.session_state.get("pipeline_result") == "success":
+        st.success(_tr("Pipeline completed successfully! All data has been refreshed."))
+        st.session_state["pipeline_result"] = None
+    elif st.session_state.get("pipeline_result") == "error":
+        st.error(_tr("Pipeline failed. See details below."))
+        with st.expander(_tr("Error details")):
+            st.code(st.session_state.get("pipeline_error", ""), language="text")
+        st.session_state["pipeline_result"] = None
+
+    st.markdown("---")
+
 
 def render_demo(st_module, config: Dict[str, Any], data_loader=None) -> None:
     """Render the at-a-glance demo / showcase page (presentation-grade)."""
@@ -536,6 +722,8 @@ def render_demo(st_module, config: Dict[str, Any], data_loader=None) -> None:
     total_clv_uni = baseline_clv + uni["saved"]
     total_clv_ai = baseline_clv + summary["delta_clv"]
 
+    net_gain_label = _tr("Net gain")
+
     no_card = _scenario_card_html(
         title=_tr("No intervention"),
         icon="⛔",
@@ -545,9 +733,10 @@ def render_demo(st_module, config: Dict[str, Any], data_loader=None) -> None:
             (_tr("Customers treated"), "0"),
             (_tr("Coupon spend"), "₩0"),
             (_tr("Saved revenue"), "₩0"),
-            (_tr("Net gain"), "₩0"),
+            (net_gain_label, "₩0"),
             (_tr("ROI"), "—"),
         ],
+        hero_label=net_gain_label,
     )
     uni_card = _scenario_card_html(
         title=_tr("Spray & pray (uniform)"),
@@ -558,9 +747,10 @@ def render_demo(st_module, config: Dict[str, Any], data_loader=None) -> None:
             (_tr("Customers treated"), f"{uni['n_treated']:,}"),
             (_tr("Coupon spend"), _format_full_krw(uni["spend"])),
             (_tr("Saved revenue"), _format_full_krw(uni["saved"])),
-            (_tr("Net gain"), _format_full_krw(uni["net_gain"])),
+            (net_gain_label, _format_full_krw(uni["net_gain"])),
             (_tr("ROI"), f"{uni['roi_multiple']:.2f}x" if uni["roi_multiple"] else "—"),
         ],
+        hero_label=net_gain_label,
     )
     ai_card = _scenario_card_html(
         title=_tr("AI targeting (ours)"),
@@ -571,7 +761,7 @@ def render_demo(st_module, config: Dict[str, Any], data_loader=None) -> None:
             (_tr("Customers treated"), f"{summary['n_treated']:,}"),
             (_tr("Coupon spend"), _format_full_krw(summary["spend"])),
             (_tr("Saved revenue"), _format_full_krw(summary["delta_clv"])),
-            (_tr("Net gain"), _format_full_krw(summary["net_gain"])),
+            (net_gain_label, _format_full_krw(summary["net_gain"])),
             (
                 _tr("ROI"),
                 f"{summary['roi_multiple']:.2f}x"
@@ -580,6 +770,7 @@ def render_demo(st_module, config: Dict[str, Any], data_loader=None) -> None:
             ),
         ],
         highlight=True,
+        hero_label=net_gain_label,
     )
 
     cols = st.columns(3)
@@ -862,3 +1053,8 @@ def render_demo(st_module, config: Dict[str, Any], data_loader=None) -> None:
                 "`allocated_budget` of treated customers."
             )
         )
+
+    # ------------------------------------------------------------------
+    # 9. Pipeline execution (bottom of page)
+    # ------------------------------------------------------------------
+    _render_pipeline_runner(st, config, lang)
