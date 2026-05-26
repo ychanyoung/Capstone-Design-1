@@ -2,6 +2,8 @@
 # Dockerfile for Streamlit Dashboard
 # =============================================================================
 # Runs the Streamlit dashboard for churn prediction visualization.
+# Includes full pipeline dependencies so the "Run Pipeline" button on
+# the Demo page can execute the ML pipeline inside this container.
 # Exposes port 8501 (Streamlit default).
 # =============================================================================
 
@@ -14,6 +16,7 @@ LABEL description="Streamlit churn prediction dashboard"
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         curl \
+        build-essential \
         libgomp1 \
         && \
     rm -rf /var/lib/apt/lists/*
@@ -21,17 +24,13 @@ RUN apt-get update && \
 # Set working directory
 WORKDIR /app
 
-# Copy dashboard requirements and install Python dependencies first (cache layer).
-# `alembic` is a transitive dep of MLflow's SQLAlchemy backend (used to migrate
-# the sqlite tracking store on first connect). `mlflow-skinny` does NOT pull it
-# in, so calling `mlflow.search_experiments()` against `sqlite:///mlflow/mlflow.db`
-# raised `ModuleNotFoundError: No module named 'alembic'`, which the dashboard
-# previously reported as the misleading "mlflow package not installed". It is
-# also declared in requirements-dashboard.txt; the explicit install below is a
-# belt-and-suspenders safety net for image rebuilds that skip the req file.
-COPY requirements-dashboard.txt /app/requirements-dashboard.txt
-RUN pip install --no-cache-dir --timeout 180 --retries 10 -r requirements-dashboard.txt && \
-    pip install --no-cache-dir --timeout 180 --retries 10 "alembic>=1.10.0,<2.0"
+# Install the full pipeline requirements so that the dashboard can
+# run `python -m src.main --mode all` directly inside this container.
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir --timeout 180 --retries 10 -r requirements.txt
+
+# cryptography pin shared with Dockerfile.pipeline
+RUN pip install --no-cache-dir --timeout 180 --retries 10 cryptography==42.0.8
 
 # Copy application source code
 COPY src/ /app/src/
@@ -53,10 +52,6 @@ HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=20s \
     CMD curl -f http://localhost:8501/_stcore/health || exit 1
 
 # Run Streamlit dashboard.
-# `--server.runOnSave=true` makes the container hot-reload when the
-# bind-mounted `src/` changes. Without it, code edits land on disk but
-# the running interpreter keeps serving the stale module — silent
-# deploy failure that hides bug fixes from anyone who reloads the page.
 CMD ["streamlit", "run", "src/dashboard/app.py", \
      "--server.port=8501", \
      "--server.address=0.0.0.0", \
