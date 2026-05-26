@@ -6434,15 +6434,60 @@ def main():
         st.rerun()
     _lang = st.session_state["lang"]
 
-    # Sidebar navigation with icons (labels translated to current language)
+    # Sidebar navigation — split PAGES by "---" separators into sections,
+    # render each section with a header caption and styled buttons.
     st.sidebar.title(_tr("Navigation", _lang))
-    pages = get_page_list()
-    page_labels = [
-        f"{get_page_icon(p)} {_tr(p, _lang)}" for p in pages
-    ]
-    selected_label = st.sidebar.radio(_tr("Select Page", _lang), page_labels)
-    # Map the translated label back to the canonical English page key
-    page = pages[page_labels.index(selected_label)]
+    all_entries = get_page_list()
+
+    sections: list[list[str]] = [[]]
+    for entry in all_entries:
+        if entry == "---":
+            sections.append([])
+        else:
+            sections[-1].append(entry)
+
+    section_titles = (
+        ["💼 사용자용", "📊 분석용", "🔧 모델/시스템"]
+        if _lang == "ko"
+        else ["💼 Business", "📊 Analytics", "🔧 Model Ops"]
+    )
+
+    if "nav_page" not in st.session_state:
+        st.session_state["nav_page"] = sections[0][0] if sections and sections[0] else "Demo"
+
+    st.sidebar.markdown(
+        "<style>"
+        "section[data-testid='stSidebar'] button[data-testid='stBaseButton-secondary'],"
+        "section[data-testid='stSidebar'] button[data-testid='stBaseButton-primary'] {"
+        "  text-align: left !important; justify-content: flex-start !important;"
+        "  padding: 2px 8px !important; font-size: 13px !important;"
+        "  min-height: 0 !important; line-height: 1.4 !important;"
+        "}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+
+    for sec_idx, sec_pages in enumerate(sections):
+        if not sec_pages:
+            continue
+        if sec_idx > 0:
+            st.sidebar.markdown("---")
+        if sec_idx < len(section_titles):
+            st.sidebar.caption(section_titles[sec_idx])
+        for p in sec_pages:
+            label = f"{get_page_icon(p)} {_tr(p, _lang)}"
+            is_active = st.session_state["nav_page"] == p
+            btn_type = "primary" if is_active else "secondary"
+            if st.sidebar.button(
+                label,
+                key=f"nav_{p}",
+                use_container_width=True,
+                type=btn_type,
+            ):
+                st.session_state["nav_page"] = p
+                st.rerun()
+
+    page = st.session_state["nav_page"]
 
     data_loader = get_data_loader(config)
 

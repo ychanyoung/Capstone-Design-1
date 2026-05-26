@@ -21,21 +21,26 @@ logger = logging.getLogger(__name__)
 # =========================================================================
 
 PAGES = [
+    # --- Business Decision (사용자용) ---
     "Demo",
     "Overview",
-    "Churn Analytics",
-    "Model Performance",
-    "Customer Segmentation",
-    "Cohort Analysis",
-    "Budget Optimization",
-    "A/B Testing",
-    "Survival Analysis",
-    "Model Monitoring",
     "Recommendations",
-    "CLV Prediction",
-    "Uplift Modeling",
+    "Budget Optimization",
     "CLV & Retention Campaign",
     "Real-Time Scoring",
+    "---",
+    # --- Analytics (분석용) ---
+    "Churn Analytics",
+    "Customer Segmentation",
+    "Cohort Analysis",
+    "CLV Prediction",
+    "Survival Analysis",
+    "Uplift Modeling",
+    "A/B Testing",
+    "---",
+    # --- Model Ops (모델/시스템) ---
+    "Model Performance",
+    "Model Monitoring",
     "MLflow Experiments",
     "System Health",
 ]
@@ -49,6 +54,22 @@ PAGES = [
 # for now; toggle affects shell + navigation.
 
 I18N_KO = {
+    # --- Pipeline Execution (파이프라인 실행) ---
+    "Pipeline Execution": "파이프라인 실행",
+    "Configure churn definition parameters and run the full end-to-end pipeline. After completion, refresh the page to see updated results.": "이탈 정의 파라미터를 설정하고 전체 파이프라인을 실행합니다. 완료 후 페이지를 새로고침하면 갱신된 결과를 확인할 수 있습니다.",
+    "No-purchase days": "미구매 일수",
+    "No-login days": "미로그인 일수",
+    "Days without purchase to flag churn": "이탈로 판단할 미구매 기간(일)",
+    "Days without login/visit to flag churn": "이탈로 판단할 미로그인 기간(일)",
+    "OR = either condition triggers churn. AND = both conditions must be met.": "OR = 두 조건 중 하나만 충족해도 이탈. AND = 두 조건 모두 충족해야 이탈.",
+    "Observation window": "관측 윈도우",
+    "automatically set to max(no_purchase_days, no_login_days)": "max(미구매 일수, 미로그인 일수)로 자동 설정",
+    "Churn definition has been modified. Click the button below to apply and run the pipeline.": "이탈 정의가 변경되었습니다. 아래 버튼을 클릭하여 적용하고 파이프라인을 실행하세요.",
+    "Run Full Pipeline": "전체 파이프라인 실행",
+    "Running full pipeline... This may take several minutes.": "전체 파이프라인 실행 중... 수 분이 소요될 수 있습니다.",
+    "Pipeline completed successfully! All data has been refreshed.": "파이프라인이 성공적으로 완료되었습니다! 모든 데이터가 갱신되었습니다.",
+    "Pipeline failed. See details below.": "파이프라인 실행에 실패했습니다. 아래 세부 정보를 확인하세요.",
+    "Error details": "오류 상세",
     # --- Demo (시연) page -----------------------------------------------
     "Demo": "시연",
     "Demo: Coupon Recommendation Impact on CLV": "시연: 쿠폰 추천이 CLV에 미치는 영향",
