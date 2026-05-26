@@ -8,7 +8,7 @@
       "primary_path": "models/ml_churn_model.pkl.joblib",
       "versioned_path": "models/ml_churn_model_v1.pkl.joblib",
       "metadata": {
-        "model_type": "lightgbm",
+        "model_type": "xgboost",
         "n_folds": 5,
         "feature_count": 33
       }
