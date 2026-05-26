@@ -233,6 +233,7 @@ def _runtime_checkpoint_context(
     """Build stable runtime identity for checkpoint freshness checks."""
     mlflow_cfg = config.get("mlflow", {}) or {}
     redis_cfg = config.get("redis", {}) or {}
+    churn_cfg = config.get("churn_definition", {}) or {}
     shape = _simulation_runtime_shape(config, args)
     return {
         "checkpoint_version": 2,
@@ -241,6 +242,9 @@ def _runtime_checkpoint_context(
         "results_dir": str(results_dir.resolve()),
         "num_customers": shape["num_customers"],
         "simulation_days": shape["simulation_days"],
+        "no_purchase_days": int(churn_cfg.get("no_purchase_days", 30)),
+        "no_login_days": int(churn_cfg.get("no_login_days", 60)),
+        "churn_operator": str(churn_cfg.get("operator", "OR")),
         "mlflow_tracking_uri": str(mlflow_cfg.get("tracking_uri", "")),
         "mlflow_artifact_location": str(mlflow_cfg.get("artifact_location", "")),
         "redis_host": str(redis_cfg.get("host", "")),
